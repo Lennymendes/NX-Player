@@ -11,6 +11,7 @@
 #include "../Source/Providers/StreamingProviders.h"
 #include "../Source/Providers/Http.h"
 #include "../Source/Output/CaptureBackend.h"
+#include <future>
 
 using namespace nxtest;
 
@@ -560,4 +561,42 @@ NX_TEST_SECTION (206, "NAS : flux HTTP progressif vers le moteur (bit-perfect)")
     const bool ok = got.size() >= pcm.size() && std::equal (pcm.begin(), pcm.end(), got.begin());
     t.check (ok && capture->config.sampleRate == 192000.0, "NAS (UPnP) -> moteur -> DAC 192 kHz : bit-perfect");
     t.check (engine.getSignalPath().nodes.empty() || true, "Signal Path disponible");
+}
+
+//==============================================================================
+NX_TEST_SECTION (207, "OAuth : serveur de retour local (préconnexion, favicon, code)")
+{
+    nx::OAuthLoopback loop;
+    juce::String err;
+    const int port = 43899;
+    t.check (loop.open (port, err), "écoute sur 127.0.0.1:"_t + juce::String (port) + (err.isNotEmpty() ? " " + err : juce::String()));
+
+    auto browser = std::async (std::launch::async, [port]
+    {
+        juce::Thread::sleep (100);
+        { juce::StreamingSocket pre; pre.connect ("127.0.0.1", port, 1000); }   // speculative preconnect, no request
+        auto get = [port] (const juce::String& path)
+        {
+            juce::StreamingSocket s;
+            if (! s.connect ("127.0.0.1", port, 2000)) return juce::String();
+            const juce::String req = "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+            s.write (req.toRawUTF8(), (int) req.getNumBytesAsUTF8());
+            juce::MemoryBlock got;
+            for (int i = 0; i < 100; ++i)
+            {
+                if (s.waitUntilReady (true, 50) != 1) continue;
+                char b[4096];
+                const int n = s.read (b, sizeof (b), false);
+                if (n <= 0) break;
+                got.append (b, (size_t) n);
+            }
+            return got.toString();
+        };
+        const auto fav = get ("/favicon.ico");
+        const auto cb = get ("/callback?code=AbC123&state=x");
+        return fav.startsWith ("HTTP/1.1 404") && cb.startsWith ("HTTP/1.1 200") && cb.contains ("connect");
+    });
+    const auto code = loop.waitForCode (10000, err);
+    t.check (code == "AbC123", "code reçu malgré la préconnexion et /favicon.ico ("_t + code + (err.isNotEmpty() ? ", " + err : juce::String()) + ")");
+    t.check (browser.get(), "le navigateur reçoit une page de confirmation"_t);
 }

@@ -78,31 +78,118 @@ namespace
     };
 }
 
+namespace
+{
+    // Accepted sockets inherit the listener's non-blocking mode on Windows: wait for readiness explicitly.
+    juce::String readRequestHead (juce::StreamingSocket& c, int timeoutMs)
+    {
+        juce::MemoryBlock data;
+        for (int waited = 0; waited < timeoutMs;)
+        {
+            const int ready = c.waitUntilReady (true, 50);
+            if (ready < 0) break;
+            if (ready == 0) { waited += 50; continue; }
+            char buf[4096];
+            const int n = c.read (buf, sizeof (buf), false);
+            if (n <= 0) break;
+            data.append (buf, (size_t) n);
+            if (data.toString().contains ("\r\n\r\n") || data.getSize() > 65536) break;
+        }
+        return data.toString();
+    }
+
+    void writeAll (juce::StreamingSocket& c, const juce::String& text)
+    {
+        const char* p = text.toRawUTF8();
+        int left = (int) text.getNumBytesAsUTF8();
+        for (int stalls = 0; left > 0 && stalls < 100;)
+        {
+            const int w = c.write (p, left);
+            if (w > 0) { p += w; left -= w; stalls = 0; continue; }
+            if (c.waitUntilReady (false, 50) < 0) break;
+            ++stalls;
+        }
+    }
+
+    void respond (juce::StreamingSocket& c, int status, const juce::String& title, const juce::String& message)
+    {
+        const juce::String html = "<!doctype html><html><head><meta charset='utf-8'><title>NX Player</title></head>"
+                                  "<body style='font-family:-apple-system,Segoe UI,sans-serif;background:#0A0C0E;color:#EEF3F1;"
+                                  "display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
+                                  "<div style='text-align:center'><h2 style='color:#00F5A0'>" + title + "</h2><p>" + message + "</p></div></body></html>";
+        const juce::String head = "HTTP/1.1 " + juce::String (status) + (status == 200 ? " OK" : " Not Found")
+                                  + "\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: "
+                                  + juce::String ((int) html.getNumBytesAsUTF8()) + "\r\n\r\n";
+        writeAll (c, head + html);
+        // Give the browser time to read the page before the socket closes.
+        for (int i = 0; i < 20 && c.waitUntilReady (true, 50) == 0; ++i) {}
+    }
+}
+
+bool OAuthLoopback::open (int port, juce::String& error)
+{
+    listener.close();
+    for (int attempt = 0; attempt < 10; ++attempt)   // a previous attempt may still hold the port briefly
+    {
+        if (listener.createListener (port, "127.0.0.1")) return true;
+        juce::Thread::sleep (200);
+    }
+    error = "le port "_t + juce::String (port) + " est déjà utilisé (une autre connexion est en cours ?)"_t;
+    return false;
+}
+
+juce::String OAuthLoopback::waitForCode (int timeoutMs, juce::String& error)
+{
+    const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutMs;
+    while (juce::Time::getMillisecondCounter() < deadline && ! juce::Thread::currentThreadShouldExit())
+    {
+        const int ready = listener.waitUntilReady (true, 250);
+        if (ready < 0) { error = "écoute interrompue"_t; return {}; }
+        if (ready == 0) continue;
+        std::unique_ptr<juce::StreamingSocket> client (listener.waitForNextConnection());
+        if (client == nullptr) continue;
+
+        const auto request = readRequestHead (*client, 3000);
+        const auto target = request.fromFirstOccurrenceOf ("GET ", false, false).upToFirstOccurrenceOf (" ", false, false);
+        if (! target.startsWith ("/callback"))
+        {
+            // Browser preconnects, /favicon.ico...: answer and keep listening.
+            if (target.isNotEmpty()) respond (*client, 404, "NX Player", "");
+            continue;
+        }
+
+        const juce::URL u ("http://127.0.0.1" + target);
+        juce::String code, err;
+        for (int i = 0; i < u.getParameterNames().size(); ++i)
+        {
+            if (u.getParameterNames()[i] == "code")  code = u.getParameterValues()[i];
+            if (u.getParameterNames()[i] == "error") err = u.getParameterValues()[i];
+        }
+        if (code.isNotEmpty())
+        {
+            respond (*client, 200, "NX Player est connect&eacute;", "Vous pouvez fermer cet onglet et revenir dans NX Player.");
+            listener.close();
+            return code;
+        }
+        if (err.isNotEmpty())
+        {
+            respond (*client, 200, "Connexion annul&eacute;e", juce::String ("Le service a r&eacute;pondu : ") + err);
+            listener.close();
+            error = err == "access_denied" ? juce::String ("autorisation refusée"_t) : err;
+            return {};
+        }
+        respond (*client, 404, "NX Player", "Adresse de retour incompl&egrave;te.");
+    }
+    listener.close();
+    if (error.isEmpty()) error = "délai dépassé : aucune réponse du navigateur"_t;
+    return {};
+}
+
 juce::String waitForOAuthRedirect (int port, int timeoutMs, juce::String& error)
 {
-    juce::StreamingSocket listener;
-    if (! listener.createListener (port, "127.0.0.1")) { error = "port " + juce::String (port) + " indisponible"; return {}; }
-    if (listener.waitUntilReady (true, timeoutMs) != 1) { error = "délai dépassé"_t; return {}; }
-    std::unique_ptr<juce::StreamingSocket> client (listener.waitForNextConnection());
-    if (client == nullptr) { error = "connexion refusée"_t; return {}; }
-
-    char buf[8192] {};
-    const int n = client->read (buf, sizeof (buf) - 1, false);
-    const auto request = juce::String::fromUTF8 (buf, juce::jmax (0, n));
-    const auto target = request.fromFirstOccurrenceOf ("GET ", false, false).upToFirstOccurrenceOf (" ", false, false);
-    juce::URL u ("http://127.0.0.1" + target);
-    juce::String code;
-    for (int i = 0; i < u.getParameterNames().size(); ++i)
-    {
-        if (u.getParameterNames()[i] == "code") code = u.getParameterValues()[i];
-        if (u.getParameterNames()[i] == "error") error = u.getParameterValues()[i];
-    }
-    const juce::String html = code.isNotEmpty() ? "<html><body style='font-family:sans-serif;background:#0A0C0E;color:#00F5A0'><h2>NX Player est connect&eacute;.</h2><p>Vous pouvez fermer cette fen&ecirc;tre.</p></body></html>"
-                                                : "<html><body><h2>Connexion refus&eacute;e.</h2></body></html>";
-    const juce::String response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: "
-                                  + juce::String ((int) html.getNumBytesAsUTF8()) + "\r\n\r\n" + html;
-    client->write (response.toRawUTF8(), (int) response.getNumBytesAsUTF8());
-    return code;
+    OAuthLoopback loop;
+    if (! loop.open (port, error)) return {};
+    return loop.waitForCode (timeoutMs, error);
 }
 
 //==============================================================================
@@ -512,8 +599,10 @@ juce::String SpotifyProvider::codeChallenge (const juce::String& verifier)
 
 bool SpotifyProvider::signIn (juce::String& error)
 {
-    if (! isConfigured()) { error = "renseignez votre client_id Spotify (developer.spotify.com)"_t; return false; }
+    if (! isConfigured()) { error = "aucun client_id Spotify : cette version a été compilée sans NX_SPOTIFY_CLIENT_ID, renseignez le vôtre"_t; return false; }
     const int port = 43821;
+    OAuthLoopback loopback;   // listening before the browser opens: an already-granted consent redirects instantly
+    if (! loopback.open (port, error)) return false;
     const auto redirect = "http://127.0.0.1:" + juce::String (port) + "/callback";
     const auto verifier = randomToken (64);
     juce::URL auth ("https://accounts.spotify.com/authorize");
@@ -523,9 +612,9 @@ bool SpotifyProvider::signIn (juce::String& error)
                .withParameter ("code_challenge_method", "S256")
                .withParameter ("code_challenge", codeChallenge (verifier))
                .withParameter ("scope", "user-library-read playlist-read-private user-read-playback-state user-modify-playback-state");
-    auth.launchInDefaultBrowser();
+    if (! auth.launchInDefaultBrowser()) { error = "impossible d'ouvrir le navigateur"_t; return false; }
 
-    const auto code = waitForOAuthRedirect (port, 180000, error);
+    const auto code = loopback.waitForCode (300000, error);
     if (code.isEmpty()) return false;
 
     juce::StringPairArray f;
@@ -538,7 +627,14 @@ bool SpotifyProvider::signIn (juce::String& error)
     h.set ("Content-Type", "application/x-www-form-urlencoded");
     auto r = httpRequest ("POST", juce::URL ("https://accounts.spotify.com/api/token"), h, formEncode (f));
     const auto j = r.json();
-    if (j.getProperty ("access_token", {}).toString().isEmpty()) { error = "Spotify : " + r.body.substring (0, 200); return false; }
+    if (j.getProperty ("access_token", {}).toString().isEmpty())
+    {
+        const auto desc = j.getProperty ("error_description", {}).toString();
+        error = desc.isNotEmpty() ? desc : r.body.substring (0, 200);
+        if (error.containsIgnoreCase ("client") || error.containsIgnoreCase ("redirect"))
+            error << " — vérifiez que l'application Spotify déclare l'adresse de redirection "_t << redirect;
+        return false;
+    }
     creds.set ("spotify", "access_token", j.getProperty ("access_token", {}).toString());
     creds.set ("spotify", "refresh_token", j.getProperty ("refresh_token", {}).toString());
     return true;

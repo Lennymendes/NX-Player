@@ -40,7 +40,7 @@ les archives sur une étiquette `v*`.
 "build/NXPlayer_artefacts/Release/NX Player.app/Contents/MacOS/NX Player" --selftest
 ```
 
-18 sections, 130 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
+19 sections, 133 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
 captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 
 | # | Section | Ce qui est prouvé |
@@ -123,6 +123,17 @@ et YouTube ne délivrent pas de flux audio aux applications tierces, et leurs co
 l'audio. Les endpoints Qobuz et Tidal sont ceux de leurs programmes partenaires ; ils peuvent évoluer.
 
 Paroles : fichier `.lrc` à côté du morceau, puis tags (USLT, LYRICS), puis LRCLIB (désactivable dans les réglages).
+
+### Identifiants intégrés (connexion en un clic)
+
+Les identifiants d'application peuvent être compilés dans NX Player : l'utilisateur n'a plus qu'à se connecter avec
+son compte (navigateur pour Spotify, e-mail + mot de passe pour Qobuz, code pour Tidal) et les champs techniques
+disparaissent. Options CMake ou variables d'environnement : `NX_SPOTIFY_CLIENT_ID`, `NX_QOBUZ_APP_ID`,
+`NX_QOBUZ_APP_SECRET`, `NX_TIDAL_CLIENT_ID`, `NX_TIDAL_CLIENT_SECRET`. Dans GitHub Actions, créez des secrets du
+même nom (Settings › Secrets and variables › Actions) : la CI les intègre aux applications compilées.
+
+Spotify : créez une application sur developer.spotify.com (Web API), ajoutez l'adresse de redirection
+`http://127.0.0.1:43821/callback` et copiez son Client ID. Pas de secret : la connexion utilise PKCE.
 
 ## Utilisation
 

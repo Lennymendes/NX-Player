@@ -299,8 +299,11 @@ void SourcePage::buildProvider (MediaProvider& p)
     {
         description = "FLAC jusqu'à 24 bits / 192 kHz, lu par le moteur bit-perfect de NX Player (changement automatique de fréquence du DAC). "_t
                       "L'API Qobuz demande des identifiants d'application partenaire (app_id / app_secret) délivrés par Qobuz."_t;
-        addField ("app_id (partenaire Qobuz)", "app_id");
-        addField ("app_secret", "app_secret", false);
+        if (CredentialStore::builtIn ("qobuz", "app_id").isEmpty())
+        {
+            addField ("app_id (partenaire Qobuz)", "app_id");
+            addField ("app_secret", "app_secret", false);
+        }
         auto* email = addField ("E-mail du compte Qobuz", "email");
         auto* password = addField ("Mot de passe", "password_input", true);
         addButton (p.isSignedIn() ? "Se reconnecter" : "Se connecter", [this, &p, email, password]
@@ -315,8 +318,11 @@ void SourcePage::buildProvider (MediaProvider& p)
     {
         description = "FLAC (et FLAC Max jusqu'à 24 / 192 en DASH) lu par le moteur bit-perfect. Connexion par code sur link.tidal.com "_t
                       "avec un client_id délivré par Tidal (programme développeurs). Les flux chiffrés (DRM) ne sont pas pris en charge."_t;
-        addField ("client_id (Tidal)", "client_id");
-        addField ("client_secret (facultatif)", "client_secret");
+        if (CredentialStore::builtIn ("tidal", "client_id").isEmpty())
+        {
+            addField ("client_id (Tidal)", "client_id");
+            addField ("client_secret (facultatif)", "client_secret");
+        }
         addButton (p.isSignedIn() ? "Se reconnecter" : "Se connecter", [this, &p]
         {
             auto& tidal = static_cast<TidalProvider&> (p);
@@ -344,10 +350,11 @@ void SourcePage::buildProvider (MediaProvider& p)
     }
     else if (id == "spotify")
     {
-        description = "Recherche, bibliothèque et playlists via l'API Web officielle de Spotify (connexion PKCE avec votre propre client_id, "_t
+        description = "Recherche, bibliothèque et playlists via l'API Web officielle de Spotify (connexion PKCE dans votre navigateur, "_t
                       "redirection http://127.0.0.1:43821/callback). La lecture est confiée à votre appareil Spotify Connect : Spotify ne "_t
                       "délivre pas de flux audio aux applications tierces, ces morceaux ne passent donc pas par le moteur bit-perfect."_t;
-        addField ("client_id (developer.spotify.com)", "client_id");
+        if (CredentialStore::builtIn ("spotify", "client_id").isEmpty())
+            addField ("client_id (developer.spotify.com, redirection http://127.0.0.1:43821/callback)", "client_id");
         addButton (p.isSignedIn() ? "Se reconnecter" : "Se connecter (navigateur)", [this, &p]
         {
             juce::Component::SafePointer<SourcePage> safe (this);

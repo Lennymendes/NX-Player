@@ -133,7 +133,21 @@ private:
     CredentialStore& creds;
 };
 
-/** Loopback HTTP listener for OAuth redirects (http://127.0.0.1:<port>/callback?code=...). */
+/** Loopback HTTP listener for OAuth redirects (http://127.0.0.1:<port>/callback?code=...).
+    open() it BEFORE launching the browser: when consent was already given, the provider redirects at once. */
+class OAuthLoopback
+{
+public:
+    bool open (int port, juce::String& error);
+    /** Serves every connection (preconnects, favicon...) until /callback brings a code or an error. */
+    juce::String waitForCode (int timeoutMs, juce::String& error);
+    void close() { listener.close(); }
+
+private:
+    juce::StreamingSocket listener;
+};
+
+/** Convenience: open + wait (the listener opens late, prefer OAuthLoopback). */
 juce::String waitForOAuthRedirect (int port, int timeoutMs, juce::String& error);
 
 } // namespace nx

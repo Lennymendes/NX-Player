@@ -2,6 +2,7 @@
 #include "MediaProvider.h"
 #include "Http.h"
 #include <map>
+#include <nx_builtin_credentials.h>
 #if JUCE_LINUX || JUCE_MAC
  #include <sys/stat.h>
 #endif
@@ -16,10 +17,27 @@ CredentialStore::CredentialStore (juce::File f) : file (std::move (f))
     if (! root.isObject()) root = juce::var (new juce::DynamicObject());
 }
 
+juce::String CredentialStore::builtIn (const juce::String& provider, const juce::String& key)
+{
+    static const std::map<std::pair<juce::String, juce::String>, const char*> defaults {
+        { { "spotify", "client_id" },     NX_BUILTIN_SPOTIFY_CLIENT_ID },
+        { { "tidal",   "client_id" },     NX_BUILTIN_TIDAL_CLIENT_ID },
+        { { "tidal",   "client_secret" }, NX_BUILTIN_TIDAL_CLIENT_SECRET },
+        { { "qobuz",   "app_id" },        NX_BUILTIN_QOBUZ_APP_ID },
+        { { "qobuz",   "app_secret" },    NX_BUILTIN_QOBUZ_APP_SECRET },
+    };
+    const auto it = defaults.find ({ provider, key });
+    return it != defaults.end() ? juce::String (it->second) : juce::String();
+}
+
 juce::String CredentialStore::get (const juce::String& provider, const juce::String& key) const
 {
-    const juce::ScopedLock l (lock);
-    return root.getProperty (provider, {}).getProperty (key, {}).toString();
+    juce::String v;
+    {
+        const juce::ScopedLock l (lock);
+        v = root.getProperty (provider, {}).getProperty (key, {}).toString().trim();
+    }
+    return v.isNotEmpty() ? v : builtIn (provider, key);   // a value typed by the user wins over the built-in one
 }
 
 void CredentialStore::set (const juce::String& provider, const juce::String& key, const juce::String& value)

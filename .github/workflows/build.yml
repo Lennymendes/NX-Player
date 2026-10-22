@@ -7,6 +7,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Identifiants intégrés à l'application (facultatifs) : Settings > Secrets and variables > Actions.
+env:
+  NX_SPOTIFY_CLIENT_ID: ${{ secrets.NX_SPOTIFY_CLIENT_ID || vars.NX_SPOTIFY_CLIENT_ID }}
+  NX_TIDAL_CLIENT_ID: ${{ secrets.NX_TIDAL_CLIENT_ID }}
+  NX_TIDAL_CLIENT_SECRET: ${{ secrets.NX_TIDAL_CLIENT_SECRET }}
+  NX_QOBUZ_APP_ID: ${{ secrets.NX_QOBUZ_APP_ID }}
+  NX_QOBUZ_APP_SECRET: ${{ secrets.NX_QOBUZ_APP_SECRET }}
+
 jobs:
   linux:
     runs-on: ubuntu-24.04

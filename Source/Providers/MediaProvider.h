@@ -24,7 +24,10 @@ class CredentialStore
 {
 public:
     explicit CredentialStore (juce::File file);
+    /** Stored value, or the credential compiled into this build (see NX_SPOTIFY_CLIENT_ID... in CMake). */
     juce::String get (const juce::String& provider, const juce::String& key) const;
+    /** Credential compiled into this build, empty if none. */
+    static juce::String builtIn (const juce::String& provider, const juce::String& key);
     void set (const juce::String& provider, const juce::String& key, const juce::String& value);
     void clear (const juce::String& provider);
     juce::File getFile() const { return file; }
