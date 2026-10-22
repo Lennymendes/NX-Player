@@ -40,7 +40,7 @@ les archives sur une étiquette `v*`.
 "build/NXPlayer_artefacts/Release/NX Player.app/Contents/MacOS/NX Player" --selftest
 ```
 
-18 sections, 129 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
+18 sections, 130 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
 captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 
 | # | Section | Ce qui est prouvé |

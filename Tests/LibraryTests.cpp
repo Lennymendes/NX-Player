@@ -183,11 +183,14 @@ namespace
                     + "\r\nConnection: close\r\n\r\n";
                 c->write (head.toRawUTF8(), (int) head.getNumBytesAsUTF8());
                 size_t sent = 0;
-                while (method != "HEAD" && sent < body.getSize())
+                // On Windows an accepted socket inherits the listener's non-blocking mode: when the send
+                // buffer is full, write() fails with "would block" -> wait until writable and try again.
+                for (int stalls = 0; method != "HEAD" && sent < body.getSize() && stalls < 200 && ! threadShouldExit();)
                 {
                     const int w = c->write ((const char*) body.getData() + sent, (int) std::min<size_t> (65536, body.getSize() - sent));
-                    if (w <= 0) break;
-                    sent += (size_t) w;
+                    if (w > 0) { sent += (size_t) w; stalls = 0; continue; }
+                    if (c->waitUntilReady (false, 50) < 0) break;
+                    ++stalls;
                 }
                 // Let the client close first: closing with unread bytes pending makes some stacks send a
                 // reset that can discard the tail of the response on the client side.
