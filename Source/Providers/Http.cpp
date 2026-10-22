@@ -122,30 +122,64 @@ HttpStream::~HttpStream() { stopThread (5000); }
 
 bool HttpStream::produce()
 {
-    juce::WebInputStream web (url, false);
-    if (headers.isNotEmpty()) web.withExtraHeaders (headers);
-    web.withConnectionTimeout (15000);
-    if (! web.connect (nullptr) || web.isError())
-    {
-        fail ("connexion impossible : "_t + url.toString (false));
-        return false;
-    }
-    const int status = web.getStatusCode();
-    if (status < 200 || status >= 300)
-    {
-        fail ("HTTP " + juce::String (status));
-        return false;
-    }
-    setExpectedLength (web.getTotalLength());
-
+    // Some HTTP stacks (WinINet in particular) can report the end of a response early. When the server
+    // announced a length, reconnect and resume with a Range request (or skip what we have if the server
+    // ignores ranges) instead of handing a truncated file to the decoder.
+    juce::int64 received = 0, total = -1;
     juce::HeapBlock<char> buf (1 << 16);
-    while (! threadShouldExit())
+    for (int attempt = 0; attempt < 6 && ! threadShouldExit(); ++attempt)
     {
-        const int n = web.read (buf.get(), 1 << 16);
-        if (n <= 0) break;
-        if (! append (buf.get(), (size_t) n)) return false;
+        juce::String h = headers;
+        if (received > 0) h << (h.isEmpty() || h.endsWith ("\n") ? "" : "\r\n") << "Range: bytes=" << received << "-\r\n";
+        juce::WebInputStream web (url, false);
+        if (h.isNotEmpty()) web.withExtraHeaders (h);
+        web.withConnectionTimeout (15000);
+        if (! web.connect (nullptr) || web.isError())
+        {
+            if (received > 0) { juce::Thread::sleep (200); continue; }
+            fail ("connexion impossible : "_t + url.toString (false));
+            return false;
+        }
+        const int status = web.getStatusCode();
+        if (status < 200 || status >= 300)
+        {
+            fail ("HTTP " + juce::String (status));
+            return false;
+        }
+        juce::int64 skip = 0;
+        if (received == 0)
+        {
+            total = web.getTotalLength();
+            setExpectedLength (total);
+        }
+        else if (status != 206)
+        {
+            skip = received;   // full body again: drop what we already have
+        }
+
+        while (! threadShouldExit())
+        {
+            const int n = web.read (buf.get(), 1 << 16);
+            if (n <= 0) break;
+            int offset = 0;
+            if (skip > 0)
+            {
+                offset = (int) std::min<juce::int64> (skip, n);
+                skip -= offset;
+                if (offset == n) continue;
+            }
+            if (! append (buf.get() + offset, (size_t) (n - offset))) return false;
+            received += n - offset;
+        }
+        if (threadShouldExit()) return true;
+        if (total < 0 || received >= total) return ! (total < 0 && web.isError());
     }
-    return ! web.isError();
+    if (total >= 0 && received < total)
+    {
+        fail ("téléchargement incomplet : "_t + juce::String (received) + " / " + juce::String (total) + " octets"_t);
+        return false;
+    }
+    return true;
 }
 
 } // namespace nx

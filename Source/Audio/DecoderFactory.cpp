@@ -114,6 +114,10 @@ std::unique_ptr<AudioDecoder> wrapJuce (std::unique_ptr<juce::InputStream> s, co
         // The MP3 reader accepts almost anything: only try it for .mp3 files.
         if (dynamic_cast<juce::MP3AudioFormat*> (af) != nullptr && ext != "mp3") continue;
        #endif
+       #if JUCE_MAC || JUCE_IOS
+        // CoreAudio also opens FLAC, but as float / left-justified 32-bit: FLAC must go to the FLAC reader.
+        if (dynamic_cast<juce::CoreAudioFormat*> (af) != nullptr && ext == "flac") continue;
+       #endif
         s->setPosition (0);
         if (auto* raw = af->createReaderFor (s.get(), false))
         {

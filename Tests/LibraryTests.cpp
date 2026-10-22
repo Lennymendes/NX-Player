@@ -516,7 +516,14 @@ NX_TEST_SECTION (206, "NAS : flux HTTP progressif vers le moteur (bit-perfect)")
         auto d = nx::openDecoder (std::make_unique<nx::HttpStream> (juce::URL (url)), "track.flac", err);
         std::vector<int32_t> back (pcm.size());
         const int n = d != nullptr ? d->readInt (back.data(), 60000) : 0;
-        t.check (n == 60000 && back == pcm, "HttpStream + décodeur FLAC : flux identique ("_t + juce::String (n) + " trames, "_t + juce::String (server.requests) + " requête(s))"_t + (err.isNotEmpty() ? " " + err : juce::String()));
+        juce::String diag;
+        if (d != nullptr)
+        {
+            diag << " [" << d->getFormat().describe() << "]";
+            for (size_t i = 0; i < pcm.size(); ++i)
+                if (back[i] != pcm[i]) { diag << " 1re différence #"_t << (int) i << " : " << back[i] << " au lieu de " << pcm[i]; break; }
+        }
+        t.check (n == 60000 && back == pcm, "HttpStream + décodeur FLAC : flux identique ("_t + juce::String (n) + " trames, "_t + juce::String (server.requests) + " requête(s))"_t + diag + (err.isNotEmpty() ? " " + err : juce::String()));
     }
 
     // Through the whole chain: library row from DIDL -> UnifiedMediaProvider -> engine -> virtual DAC
