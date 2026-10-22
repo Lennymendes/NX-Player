@@ -696,10 +696,18 @@ TrackInfo SpotifyProvider::parseTrack (const juce::var& j)
 
 std::vector<TrackInfo> SpotifyProvider::searchTracks (const juce::String& query, int limit)
 {
-    auto r = api ("GET", "search?type=track&limit=" + juce::String (juce::jlimit (1, 50, limit)) + "&q=" + juce::URL::addEscapeChars (query, true));
+    // Since February 2026 the search limit is 10 per page (development mode): page with offset.
     std::vector<TrackInfo> out;
-    if (auto* items = r.json().getProperty ("tracks", {}).getProperty ("items", {}).getArray())
+    const int wanted = juce::jlimit (1, 30, limit);
+    for (int offset = 0; offset < wanted; offset += 10)
+    {
+        auto r = api ("GET", "search?type=track&limit=" + juce::String (juce::jmin (10, wanted - offset)) + "&offset=" + juce::String (offset)
+                                 + "&q=" + juce::URL::addEscapeChars (query, true));
+        auto* items = r.json().getProperty ("tracks", {}).getProperty ("items", {}).getArray();
+        if (items == nullptr || items->isEmpty()) break;
         for (auto& it : *items) out.push_back (parseTrack (it));
+        if (items->size() < 10) break;
+    }
     return out;
 }
 
@@ -710,21 +718,24 @@ std::vector<PlaylistInfo> SpotifyProvider::getPlaylists()
     if (auto* items = r.json().getProperty ("items", {}).getArray())
         for (auto& it : *items)
             out.push_back ({ 0, it.getProperty ("name", {}).toString(), "spotify", it.getProperty ("id", {}).toString(),
-                             (int) it.getProperty ("tracks", {}).getProperty ("total", 0) });
+                             (int) (it.getProperty ("items", {}).isObject() ? it.getProperty ("items", {}) : it.getProperty ("tracks", {})).getProperty ("total", 0) });
     return out;
 }
 
 std::vector<TrackInfo> SpotifyProvider::getPlaylistTracks (const juce::String& id)
 {
     std::vector<TrackInfo> out;
-    juce::String path = "playlists/" + id + "/tracks?limit=100";
+    juce::String path = "playlists/" + id + "/items?limit=100";   // "/tracks" was removed in February 2026
     for (int page = 0; page < 20 && path.isNotEmpty(); ++page)
     {
         auto r = api ("GET", path);
         const auto j = r.json();
         if (auto* items = j.getProperty ("items", {}).getArray())
             for (auto& it : *items)
-                if (it.getProperty ("track", {}).isObject()) out.push_back (parseTrack (it.getProperty ("track", {})));
+            {
+                const auto entry = it.getProperty ("item", {}).isObject() ? it.getProperty ("item", {}) : it.getProperty ("track", {});
+                if (entry.isObject() && entry.getProperty ("type", "track").toString() == "track") out.push_back (parseTrack (entry));
+            }
         path = j.getProperty ("next", {}).toString().fromFirstOccurrenceOf ("/v1/", false, false);
     }
     return out;

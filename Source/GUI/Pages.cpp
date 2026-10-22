@@ -374,7 +374,7 @@ void SourcePage::buildProvider (MediaProvider& p)
         addField ("Identifiants de playlists publiques (séparés par des virgules)"_t, "playlists");
     }
 
-    addText ("État : "_t + p.getStatusText() + (p.lastError.isNotEmpty() ? "  ·  " + p.lastError : juce::String()), false);
+    addText ("État : "_t + p.getStatusText() + (p.lastError.isNotEmpty() ? "  ·  "_t + p.lastError : juce::String()), false);
 
     if (p.isSignedIn())
     {
@@ -531,7 +531,7 @@ void SettingsPage::refresh()
         row ("Tampon du périphérique"_t, buf);
     }
     const auto status = eng.getOutputStatus();
-    row (status.open ? "État : "_t + status.backendName + " · " + formatRate (status.sampleRate) + " · " + status.detail : juce::String ("État : périphérique fermé (s'ouvre à la lecture)"_t), nullptr, 28);
+    row (status.open ? "État : "_t + status.backendName + " · "_t + formatRate (status.sampleRate) + " · "_t + status.detail : juce::String ("État : périphérique fermé (s'ouvre à la lecture)"_t), nullptr, 28);
 
     section ("DSD");
     const juce::StringArray modes { "Automatique (natif, puis DoP, puis PCM)", "DSD natif (ASIO)", "DoP (DSD over PCM)", "Conversion en PCM (DXD)" };

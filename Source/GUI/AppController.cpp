@@ -218,7 +218,7 @@ void AppController::selectBackend (const juce::String& name)
             backendName = name;
             appSettings.set ("backend", name);
             appSettings.set ("device", eng->getDeviceName());
-            showMessage ("Sortie : "_t + name + " · " + eng->getDeviceName());
+            showMessage ("Sortie : "_t + name + " · "_t + eng->getDeviceName());
             return;
         }
 }
