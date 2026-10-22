@@ -1,0 +1,95 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libxext-dev libgl1-mesa-dev \
+            libsqlite3-dev xvfb
+      - name: Configurer
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Compiler
+        run: cmake --build build --config Release
+      - name: Banc d'essai
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" "build/NXPlayer_artefacts/Release/NX Player" --selftest
+      - name: Archive
+        run: |
+          cd build/NXPlayer_artefacts/Release
+          tar czf ../../../NXPlayer-Linux.tar.gz "NX Player" Themes Plugins
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NXPlayer-Linux
+          path: NXPlayer-Linux.tar.gz
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurer (universel arm64 + x86_64)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+      - name: Compiler
+        run: cmake --build build --config Release -j 4
+      - name: Banc d'essai
+        run: '"build/NXPlayer_artefacts/Release/NX Player.app/Contents/MacOS/NX Player" --selftest'
+      - name: Archive
+        run: ditto -c -k --sequesterRsrc --keepParent "build/NXPlayer_artefacts/Release/NX Player.app" NXPlayer-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NXPlayer-macOS
+          path: NXPlayer-macOS.zip
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: SDK ASIO (facultatif, licence Steinberg ou GPLv3)
+        shell: bash
+        continue-on-error: true
+        run: git clone --depth 1 https://github.com/audiosdk/asio "$RUNNER_TEMP/asiosdk"
+      - name: Configurer
+        shell: bash
+        run: |
+          ASIO=""
+          if [ -f "$RUNNER_TEMP/asiosdk/common/asio.h" ]; then ASIO="-DNX_ASIO_SDK_DIR=$RUNNER_TEMP/asiosdk"; fi
+          cmake -B build -G "Visual Studio 17 2022" -A x64 $ASIO
+      - name: Compiler
+        run: cmake --build build --config Release -- /m
+      - name: Banc d'essai
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "build\NXPlayer_artefacts\Release\NX Player.exe" -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
+          exit $p.ExitCode
+      - name: Archive
+        shell: pwsh
+        run: Compress-Archive -Path "build\NXPlayer_artefacts\Release\NX Player.exe","build\NXPlayer_artefacts\Release\Themes","build\NXPlayer_artefacts\Release\Plugins" -DestinationPath NXPlayer-Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NXPlayer-Windows
+          path: NXPlayer-Windows.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ linux, macos, windows ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
