@@ -1,0 +1,9 @@
+{
+  "id": "aura-neon",
+  "name": "Aura Neon",
+  "author": "NX Audio Suite",
+  "version": "1.0",
+  "description": "Les couleurs d'AuraEngine (Drum Lab DXD) : anthracite et néon framboise, fond animé par un shader GLSL (dégradé procédural sans OpenGL).",
+  "stylesheet": "theme.css",
+  "background": { "type": "shader", "shader": "background.frag", "fallback": "mesh", "speed": 0.35 }
+}

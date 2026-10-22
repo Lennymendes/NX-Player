@@ -1,0 +1,52 @@
+/* NX Emerald — thème par défaut de NX Player.
+   Toutes les variables sont listées dans docs/THEMES.md. Modifiez ce fichier pendant que
+   NX Player tourne : il est rechargé à chaud. */
+:root {
+  /* Fond et surfaces */
+  --nx-bg: #0A0C0E;
+  --nx-bg-2: #0E1418;
+  --nx-surface: #12171B;
+  --nx-glass-tint: rgba(10, 14, 17, 0.56);
+  --nx-glass-strong: rgba(8, 11, 14, 0.80);
+  --nx-border: rgba(255, 255, 255, 0.08);
+  --nx-highlight: rgba(255, 255, 255, 0.06);
+  --nx-shadow: rgba(0, 0, 0, 0.55);
+
+  /* Texte */
+  --nx-text: #EEF3F1;
+  --nx-text-dim: #8A9792;
+
+  /* Accents */
+  --nx-accent: #00F5A0;
+  --nx-accent-2: #00D9F5;
+  --nx-on-accent: #04130D;
+
+  /* Qualité du signal (Signal Path) */
+  --nx-quality-bitperfect: #B07CFF;
+  --nx-quality-enhanced: var(--nx-accent);
+  --nx-quality-high: #7FE3C0;
+  --nx-quality-low: #FFB547;
+
+  /* Formes et dimensions */
+  --nx-radius: 14px;
+  --nx-radius-small: 8px;
+  --nx-sidebar-width: 236px;
+  --nx-player-height: 84px;
+  --nx-player-position: bottom;
+  --nx-card-size: 176px;
+
+  /* Arrière-plan pochette */
+  --nx-artwork-blur: 48;
+  --nx-artwork-dim: 0.58;
+  --nx-artwork-saturation: 1.25;
+
+  /* Paroles */
+  --nx-lyrics-active: var(--nx-text);
+  --nx-lyrics-inactive: rgba(238, 243, 241, 0.30);
+  --nx-lyrics-size: 30px;
+
+  /* Typographie et animations */
+  --nx-font: "";
+  --nx-font-size: 14px;
+  --nx-animation-speed: 1.0;
+}

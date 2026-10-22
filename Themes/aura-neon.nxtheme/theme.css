@@ -1,0 +1,42 @@
+/* Aura Neon — palette de la NX Audio Suite (AuraEngine / Drum Lab DXD). */
+:root {
+  --nx-bg: #12131A;
+  --nx-bg-2: #1A1B23;
+  --nx-surface: #1A1B23;
+  --nx-glass-tint: rgba(22, 23, 31, 0.62);
+  --nx-glass-strong: rgba(18, 19, 26, 0.84);
+  --nx-border: rgba(255, 59, 112, 0.16);
+  --nx-highlight: rgba(255, 255, 255, 0.05);
+  --nx-shadow: rgba(0, 0, 0, 0.6);
+
+  --nx-text: #F4F1F6;
+  --nx-text-dim: #9A93A6;
+
+  --nx-accent: #FF2A6D;
+  --nx-accent-2: #FF3B70;
+  --nx-on-accent: #1A0710;
+
+  --nx-quality-bitperfect: #C792FF;
+  --nx-quality-enhanced: #FF5C8D;
+  --nx-quality-high: #FF9EBB;
+  --nx-quality-low: #FFC14D;
+
+  --nx-radius: 10px;
+  --nx-radius-small: 6px;
+  --nx-sidebar-width: 224px;
+  --nx-player-height: 80px;
+  --nx-player-position: bottom;
+  --nx-card-size: 168px;
+
+  --nx-artwork-blur: 64;
+  --nx-artwork-dim: 0.70;
+  --nx-artwork-saturation: 1.1;
+
+  --nx-lyrics-active: #FFFFFF;
+  --nx-lyrics-inactive: rgba(255, 159, 187, 0.32);
+  --nx-lyrics-size: 28px;
+
+  --nx-font: "";
+  --nx-font-size: 14px;
+  --nx-animation-speed: 1.2;
+}

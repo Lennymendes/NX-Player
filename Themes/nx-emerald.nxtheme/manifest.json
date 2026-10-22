@@ -1,0 +1,9 @@
+{
+  "id": "nx-emerald",
+  "name": "NX Emerald",
+  "author": "NX Audio Suite",
+  "version": "1.0",
+  "description": "Thème par défaut : noir profond, verre dépoli, accents émeraude / cyan. L'arrière-plan suit la pochette en cours.",
+  "stylesheet": "theme.css",
+  "background": { "type": "artwork", "fallback": "mesh", "speed": 0.15 }
+}
