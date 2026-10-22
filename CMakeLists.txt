@@ -10,7 +10,7 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
 endif()
 
-option(NX_LTO "Optimisation à l'édition de liens (versions publiées)" ON)
+option(NX_LTO "Optimisation à l'édition de liens (versions publiées)" OFF)
 option(NX_ENABLE_OPENGL "Arrière-plans GLSL des thèmes (juce_opengl)" ON)
 set(NX_JUCE_DIR "" CACHE PATH "JUCE local (sinon téléchargé : 8.0.15)")
 set(NX_ASIO_SDK_DIR "" CACHE PATH "Windows : dossier du SDK ASIO de Steinberg (active la sortie ASIO PCM + DSD natif)")

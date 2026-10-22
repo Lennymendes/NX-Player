@@ -27,7 +27,7 @@ cmake --build build --config Release
 | Windows | Visual Studio 2022. **ASIO** (PCM + DSD natif) : `-DNX_ASIO_SDK_DIR=C:/SDK/asiosdk` (SDK Steinberg, non fourni). Sans lui : WASAPI exclusif |
 | Linux | `libasound2-dev libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libgl1-mesa-dev libsqlite3-dev` |
 
-Options CMake : `NX_JUCE_DIR` (JUCE local), `NX_ENABLE_OPENGL` (shaders de thèmes, ON), `NX_LTO` (ON),
+Options CMake : `NX_JUCE_DIR` (JUCE local), `NX_ENABLE_OPENGL` (shaders de thèmes, ON), `NX_LTO` (OFF ; le linker Xcode récent plante avec LTO),
 `NX_BUNDLED_SQLITE` (toujours actif sous Windows).
 
 La CI (`.github/workflows/build.yml`) compile macOS, Windows (avec ASIO) et Linux, lance le banc d'essai et publie

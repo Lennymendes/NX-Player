@@ -1,0 +1,11 @@
+build*/
+cmake-build-*/
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
+Plugins/DSP/*/bin/
+Plugins/DSP/*/*.so
+Plugins/DSP/*/*.dylib
+Plugins/DSP/*/*.dll

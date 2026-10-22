@@ -11,7 +11,7 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Dépendances
         run: |
           sudo apt-get update
@@ -23,7 +23,18 @@ jobs:
       - name: Compiler
         run: cmake --build build --config Release
       - name: Banc d'essai
+        env:
+          NX_SELFTEST_LOG: ${{ runner.temp }}/selftest.log
         run: xvfb-run -a -s "-screen 0 1600x1000x24" "build/NXPlayer_artefacts/Release/NX Player" --selftest
+      - name: Rapport du banc d'essai
+        if: always()
+        shell: bash
+        run: |
+          f="$RUNNER_TEMP/selftest.log"
+          [ -f "$f" ] || { echo "::warning title=Banc d'essai::aucun journal (plantage avant le démarrage ?)"; exit 0; }
+          grep -F "[ÉCHEC]" "$f" | head -20 | while IFS= read -r l; do echo "::error title=Banc d'essai::$l"; done || true
+          body=$(tail -n 80 "$f" | sed -e 's/%/%25/g' -e 's/\r//g' | awk 'BEGIN{ORS="%0A"} {print}')
+          echo "::notice title=Fin du journal du banc d'essai::$body"
       - name: Archive
         run: |
           cd build/NXPlayer_artefacts/Release
@@ -36,13 +47,24 @@ jobs:
   macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configurer (universel arm64 + x86_64)
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
       - name: Compiler
         run: cmake --build build --config Release -j 4
       - name: Banc d'essai
+        env:
+          NX_SELFTEST_LOG: ${{ runner.temp }}/selftest.log
         run: '"build/NXPlayer_artefacts/Release/NX Player.app/Contents/MacOS/NX Player" --selftest'
+      - name: Rapport du banc d'essai
+        if: always()
+        shell: bash
+        run: |
+          f="$RUNNER_TEMP/selftest.log"
+          [ -f "$f" ] || { echo "::warning title=Banc d'essai::aucun journal (plantage avant le démarrage ?)"; exit 0; }
+          grep -F "[ÉCHEC]" "$f" | head -20 | while IFS= read -r l; do echo "::error title=Banc d'essai::$l"; done || true
+          body=$(tail -n 80 "$f" | sed -e 's/%/%25/g' -e 's/\r//g' | awk 'BEGIN{ORS="%0A"} {print}')
+          echo "::notice title=Fin du journal du banc d'essai::$body"
       - name: Archive
         run: ditto -c -k --sequesterRsrc --keepParent "build/NXPlayer_artefacts/Release/NX Player.app" NXPlayer-macOS.zip
       - uses: actions/upload-artifact@v4
@@ -53,7 +75,7 @@ jobs:
   windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: SDK ASIO (facultatif, licence Steinberg ou GPLv3)
         shell: bash
         continue-on-error: true
@@ -68,9 +90,20 @@ jobs:
         run: cmake --build build --config Release -- /m
       - name: Banc d'essai
         shell: pwsh
+        env:
+          NX_SELFTEST_LOG: ${{ runner.temp }}/selftest.log
         run: |
           $p = Start-Process -FilePath "build\NXPlayer_artefacts\Release\NX Player.exe" -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
           exit $p.ExitCode
+      - name: Rapport du banc d'essai
+        if: always()
+        shell: bash
+        run: |
+          f="$RUNNER_TEMP/selftest.log"
+          [ -f "$f" ] || { echo "::warning title=Banc d'essai::aucun journal (plantage avant le démarrage ?)"; exit 0; }
+          grep -F "[ÉCHEC]" "$f" | head -20 | while IFS= read -r l; do echo "::error title=Banc d'essai::$l"; done || true
+          body=$(tail -n 80 "$f" | sed -e 's/%/%25/g' -e 's/\r//g' | awk 'BEGIN{ORS="%0A"} {print}')
+          echo "::notice title=Fin du journal du banc d'essai::$body"
       - name: Archive
         shell: pwsh
         run: Compress-Archive -Path "build\NXPlayer_artefacts\Release\NX Player.exe","build\NXPlayer_artefacts\Release\Themes","build\NXPlayer_artefacts\Release\Plugins" -DestinationPath NXPlayer-Windows.zip

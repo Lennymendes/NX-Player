@@ -39,23 +39,24 @@ int runAll (const juce::String& filter)
     ctx.tempDir.deleteRecursively();
     ctx.tempDir.createDirectory();
 
-    std::cout << "NX Player " << NX_VERSION << " — banc d'essai" << std::endl;
+    nxtest::emit (std::string ("NX Player ") + NX_VERSION + " — banc d'essai");
     int sections = 0;
     for (auto& s : r)
     {
         const juce::String name (juce::CharPointer_UTF8 (s.name));
         if (filter.isNotEmpty() && ! name.containsIgnoreCase (filter)) continue;
-        std::cout << "\n== " << s.order << ". " << name.toStdString() << std::endl;
+        nxtest::emit ("\n== " + std::to_string (s.order) + ". " + name.toStdString());
         ctx.section = name;
         const auto before = ctx.failed;
         const auto t0 = juce::Time::getMillisecondCounterHiRes();
         try { s.fn (ctx); }
         catch (const std::exception& e) { ctx.check (false, juce::String ("exception : ") + e.what()); }
-        std::cout << "   (" << juce::String ((juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0, 2).toStdString()
-                  << " s" << (ctx.failed > before ? ", ÉCHECS" : "") << ")" << std::endl;
+        nxtest::emit ("   (" + juce::String ((juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0, 2).toStdString()
+                      + " s" + (ctx.failed > before ? ", ÉCHECS" : "") + ")");
         ++sections;
     }
-    std::cout << "\n" << sections << " sections · " << ctx.passed << " vérifications réussies · " << ctx.failed << " échec(s)" << std::endl;
+    nxtest::emit ("\n" + std::to_string (sections) + " sections · " + std::to_string (ctx.passed) + " vérifications réussies · "
+                  + std::to_string (ctx.failed) + " échec(s)");
     return ctx.failed;
 }
 
