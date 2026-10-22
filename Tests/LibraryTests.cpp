@@ -157,22 +157,47 @@ namespace
                 std::unique_ptr<juce::StreamingSocket> c (listener.waitForNextConnection());
                 if (c == nullptr) continue;
                 ++requests;
-                char buf[4096] {};
-                const int n = c->read (buf, sizeof (buf) - 1, false);
-                const auto req = juce::String::fromUTF8 (buf, juce::jmax (0, n));
-                const auto path = req.fromFirstOccurrenceOf ("GET /", false, false).upToFirstOccurrenceOf (" ", false, false);
+                // Read the whole request head: native HTTP stacks (NSURLSession, WinINet) may send it in
+                // several packets, and a first non-blocking read can come back empty.
+                juce::MemoryBlock reqData;
+                for (int waited = 0; waited < 5000 && ! threadShouldExit();)
+                {
+                    const int ready = c->waitUntilReady (true, 50);
+                    if (ready < 0) break;
+                    if (ready == 0) { waited += 50; continue; }
+                    char buf[4096];
+                    const int n = c->read (buf, sizeof (buf), false);
+                    if (n <= 0) break;
+                    reqData.append (buf, (size_t) n);
+                    if (reqData.toString().contains ("\r\n\r\n")) break;
+                }
+                const auto req = reqData.toString();
+                const auto method = req.upToFirstOccurrenceOf (" ", false, false);
+                const auto path = req.fromFirstOccurrenceOf (" /", false, false).upToFirstOccurrenceOf (" ", false, false)
+                                     .upToFirstOccurrenceOf ("?", false, false);
                 juce::MemoryBlock body;
-                const bool found = dir.getChildFile (juce::URL::removeEscapeChars (path)).loadFileAsData (body);
+                const auto file = dir.getChildFile (juce::URL::removeEscapeChars (path));
+                const bool found = path.isNotEmpty() && file.existsAsFile() && file.loadFileAsData (body);
                 const juce::String head = (found ? "HTTP/1.1 200 OK\r\n" : "HTTP/1.1 404 Not Found\r\n")
                     + juce::String ("Content-Type: application/octet-stream\r\nContent-Length: ") + juce::String ((juce::int64) body.getSize())
                     + "\r\nConnection: close\r\n\r\n";
                 c->write (head.toRawUTF8(), (int) head.getNumBytesAsUTF8());
                 size_t sent = 0;
-                while (sent < body.getSize())
+                while (method != "HEAD" && sent < body.getSize())
                 {
                     const int w = c->write ((const char*) body.getData() + sent, (int) std::min<size_t> (65536, body.getSize() - sent));
                     if (w <= 0) break;
                     sent += (size_t) w;
+                }
+                // Let the client close first: closing with unread bytes pending makes some stacks send a
+                // reset that can discard the tail of the response on the client side.
+                for (int waited = 0; waited < 3000 && ! threadShouldExit();)
+                {
+                    const int ready = c->waitUntilReady (true, 50);
+                    if (ready < 0) break;
+                    if (ready == 0) { waited += 50; continue; }
+                    char sink[1024];
+                    if (c->read (sink, sizeof (sink), false) <= 0) break;
                 }
             }
         }
@@ -477,12 +502,21 @@ NX_TEST_SECTION (206, "NAS : flux HTTP progressif vers le moteur (bit-perfect)")
     TestHttpServer server (share);
     const auto url = "http://127.0.0.1:" + juce::String (server.port) + "/track.flac";
     {
-        nx::HttpStream s { juce::URL (url) };
+        // Raw bytes first, so a failure says whether the transport or the decoder is at fault.
+        juce::MemoryBlock expected;
+        share.getChildFile ("track.flac").loadFileAsData (expected);
+        nx::HttpStream raw { juce::URL (url) };
+        juce::MemoryOutputStream got;
+        got.writeFromInputStream (raw, -1);
+        t.check (got.getMemoryBlock() == expected, "HttpStream : octets identiques ("_t + juce::String ((int) got.getDataSize()) + " / "
+                     + juce::String ((int) expected.getSize()) + ")" + (raw.getError().isNotEmpty() ? " " + raw.getError() : juce::String()));
+    }
+    {
         juce::String err;
         auto d = nx::openDecoder (std::make_unique<nx::HttpStream> (juce::URL (url)), "track.flac", err);
         std::vector<int32_t> back (pcm.size());
         const int n = d != nullptr ? d->readInt (back.data(), 60000) : 0;
-        t.check (n == 60000 && back == pcm, "HttpStream + décodeur FLAC : flux identique ("_t + juce::String (server.requests) + " requêtes)"_t + (err.isNotEmpty() ? " " + err : juce::String()));
+        t.check (n == 60000 && back == pcm, "HttpStream + décodeur FLAC : flux identique ("_t + juce::String (n) + " trames, "_t + juce::String (server.requests) + " requête(s))"_t + (err.isNotEmpty() ? " " + err : juce::String()));
     }
 
     // Through the whole chain: library row from DIDL -> UnifiedMediaProvider -> engine -> virtual DAC
