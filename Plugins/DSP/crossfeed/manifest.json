@@ -1,0 +1,9 @@
+{
+  "id": "nx.crossfeed",
+  "name": "Crossfeed casque",
+  "type": "dsp",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Exemple de plug-in DSP en C (ABI nxplayer_dsp.h). La bibliothèque compilée est copiée à côté de ce fichier.",
+  "library": "crossfeed"
+}

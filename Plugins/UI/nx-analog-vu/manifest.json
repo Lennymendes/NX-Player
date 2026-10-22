@@ -1,0 +1,13 @@
+{
+  "id": "nx.analog-vu",
+  "name": "VU-mètres analogiques",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Deux VU-mètres à aiguille (intégration 300 ms, échelle −20 à +3 VU, 0 VU = −18 dBFS) avec LED de crête.",
+  "main": "plugin.js",
+  "slots": ["nowplaying.side", "home.top"],
+  "fps": 60,
+  "preferredHeight": 170,
+  "enabledByDefault": false,
+  "layout": { "lyrics": true }
+}

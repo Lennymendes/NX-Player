@@ -1,0 +1,12 @@
+{
+  "id": "nx.spectrum",
+  "name": "Spectre",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Analyseur de spectre 64 bandes (20 Hz – 20 kHz, échelle logarithmique), avec crêtes retombantes. En DSD, affiche la densité du flux 1 bit.",
+  "main": "plugin.js",
+  "slots": ["nowplaying.side", "home.top", "playerbar.right"],
+  "fps": 60,
+  "preferredHeight": 150,
+  "enabledByDefault": true
+}
