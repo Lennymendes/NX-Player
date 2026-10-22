@@ -611,7 +611,7 @@ bool SpotifyProvider::signIn (juce::String& error)
                .withParameter ("redirect_uri", redirect)
                .withParameter ("code_challenge_method", "S256")
                .withParameter ("code_challenge", codeChallenge (verifier))
-               .withParameter ("scope", "user-library-read playlist-read-private user-read-playback-state user-modify-playback-state");
+               .withParameter ("scope", "user-library-read playlist-read-private playlist-read-collaborative user-read-playback-state user-modify-playback-state");
     if (! auth.launchInDefaultBrowser()) { error = "impossible d'ouvrir le navigateur"_t; return false; }
 
     const auto code = loopback.waitForCode (300000, error);
@@ -666,7 +666,16 @@ HttpResponse SpotifyProvider::api (const juce::String& method, const juce::Strin
         if (body.isNotEmpty()) h.set ("Content-Type", "application/json");
         auto r = httpRequest (method, juce::URL ("https://api.spotify.com/v1/" + path), h, body);
         if (r.status == 401 && attempt == 0 && refreshToken()) continue;
-        if (! r.ok()) lastError = "Spotify " + path + " : HTTP " + juce::String (r.status);
+        if (r.ok()) lastError.clear();
+        else
+        {
+            const auto msg = r.json().getProperty ("error", {}).getProperty ("message", {}).toString();
+            lastError = "Spotify : HTTP " + juce::String (r.status) + (msg.isNotEmpty() ? " (" + msg + ")" : juce::String())
+                        + " sur /" + path.upToFirstOccurrenceOf ("?", false, false);
+            if (r.status == 403)
+                lastError << " — vérifiez que votre compte est ajouté dans « User Management » de l'application Spotify, "_t
+                          << "puis cliquez sur « Se reconnecter »."_t;
+        }
         return r;
     }
     return {};
@@ -741,13 +750,53 @@ std::vector<TrackInfo> SpotifyProvider::getPlaylistTracks (const juce::String& i
     return out;
 }
 
+std::vector<TrackInfo> SpotifyProvider::getLikedTracks (int maxTracks)
+{
+    std::vector<TrackInfo> out;
+    juce::String path = "me/tracks?limit=50";
+    while (path.isNotEmpty() && (int) out.size() < maxTracks)
+    {
+        auto r = api ("GET", path);
+        if (! r.ok()) break;
+        const auto j = r.json();
+        if (auto* items = j.getProperty ("items", {}).getArray())
+            for (auto& it : *items)
+            {
+                const auto entry = it.getProperty ("track", {}).isObject() ? it.getProperty ("track", {}) : it.getProperty ("item", {});
+                if (entry.isObject()) out.push_back (parseTrack (entry));
+            }
+        path = j.getProperty ("next", {}).toString().fromFirstOccurrenceOf ("/v1/", false, false);
+    }
+    return out;
+}
+
 bool SpotifyProvider::playExternally (const TrackInfo& track, juce::String& error)
 {
     const auto uri = track.uri.startsWith ("spotify:") ? track.uri : "spotify:track:" + track.externalId;
-    auto r = api ("PUT", "me/player/play", "{\"uris\":[\"" + uri + "\"]}");
+    const juce::String body = "{\"uris\":[\"" + uri + "\"]}";
+    auto r = api ("PUT", "me/player/play", body);
     if (r.ok()) return true;
-    // No active Spotify Connect device: open the Spotify app on this track.
-    if (juce::URL (uri).launchInDefaultBrowser()) return true;
+
+    if (r.status == 404)
+    {
+        // No active device: wake the first available Spotify Connect device (desktop app, phone, speaker).
+        auto d = api ("GET", "me/player/devices");
+        if (auto* devices = d.json().getProperty ("devices", {}).getArray())
+            if (! devices->isEmpty())
+            {
+                const auto id = devices->getFirst().getProperty ("id", {}).toString();
+                r = api ("PUT", "me/player/play?device_id=" + juce::URL::addEscapeChars (id, true), body);
+                if (r.ok()) return true;
+            }
+    }
+    // Premium required, or no device at all: open the track in the Spotify app (or the web player).
+    const auto webUrl = "https://open.spotify.com/track/" + uri.fromLastOccurrenceOf (":", false, false);
+    if (juce::URL (uri).launchInDefaultBrowser() || juce::URL (webUrl).launchInDefaultBrowser())
+    {
+        lastError = r.status == 403 ? juce::String ("Spotify Premium est nécessaire pour lancer la lecture depuis NX Player : le morceau s'ouvre dans Spotify."_t)
+                                    : juce::String ("Aucun appareil Spotify actif : ouvrez l'application Spotify, puis relancez."_t);
+        return true;
+    }
     error = lastError;
     return false;
 }

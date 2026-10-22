@@ -380,6 +380,75 @@ void SourcePage::buildProvider (MediaProvider& p)
     {
         juce::Component::SafePointer<SourcePage> safe (this);
         auto* provider = &p;
+        if (id == "spotify")
+        {
+            // Spotify browser: search, liked tracks, playlists. Double-click plays through Spotify Connect.
+            auto* spotify = static_cast<SpotifyProvider*> (provider);
+            auto showTracks = [safe] (std::vector<TrackInfo> list, juce::String error, juce::String what)
+            {
+                juce::MessageManager::callAsync ([safe, list = std::move (list), error, what]
+                {
+                    if (safe == nullptr || safe->tracks == nullptr) return;
+                    safe->tracks->setTracks (list, true, true);
+                    safe->ctx.showMessage (list.empty() ? (error.isNotEmpty() ? error : what + " : aucun morceau"_t)
+                                                        : what + " : " + juce::String ((int) list.size()) + " morceaux"_t);
+                    safe->layoutContent (safe->getWidth() - safe->viewport.getScrollBarThickness());
+                });
+            };
+
+            auto* search = addField ("Rechercher sur Spotify (Entrée)"_t, "__search", true);
+            search->setPasswordCharacter (0);
+            search->onReturnKey = [search, spotify, showTracks]
+            {
+                const auto q = search->getText().trim();
+                if (q.isEmpty()) return;
+                juce::Thread::launch ([spotify, showTracks, q] { auto r = spotify->searchTracks (q, 30); showTracks (std::move (r), spotify->lastError, "« "_t + q + " »"_t); });
+            };
+
+            auto* lists = new juce::ComboBox();
+            lists->setTextWhenNothingSelected ("Chargement de vos playlists…"_t);
+            rows.add (lists);
+            rowHeights.push_back (36);
+            contentComp.addAndMakeVisible (lists);
+            auto playlistIds = std::make_shared<juce::StringArray>();
+            lists->onChange = [lists, spotify, showTracks, playlistIds]
+            {
+                const int idx = lists->getSelectedItemIndex();
+                if (idx < 0) return;
+                const auto name = lists->getText();
+                const auto plId = (*playlistIds)[idx];
+                juce::Thread::launch ([spotify, showTracks, plId, name]
+                {
+                    auto r = plId == "__liked" ? spotify->getLikedTracks() : spotify->getPlaylistTracks (plId);
+                    showTracks (std::move (r), spotify->lastError, name);
+                });
+            };
+            juce::Component::SafePointer<juce::ComboBox> safeList (lists);
+            juce::Thread::launch ([spotify, safeList, playlistIds, showTracks]
+            {
+                auto pls = spotify->getPlaylists();
+                const auto err = spotify->lastError;
+                auto liked = spotify->getLikedTracks (200);
+                const auto likedErr = spotify->lastError;
+                juce::MessageManager::callAsync ([safeList, playlistIds, pls, err]
+                {
+                    if (safeList == nullptr) return;
+                    safeList->clear (juce::dontSendNotification);
+                    playlistIds->clear();
+                    safeList->addItem ("Titres likés"_t, 1);
+                    playlistIds->add ("__liked");
+                    for (auto& pl : pls)
+                    {
+                        safeList->addItem (pl.name + (pl.trackCount > 0 ? "  (" + juce::String (pl.trackCount) + ")" : juce::String()), playlistIds->size() + 1);
+                        playlistIds->add (pl.externalId);
+                    }
+                    safeList->setTextWhenNothingSelected (pls.empty() && err.isNotEmpty() ? err : juce::String ("Choisir une playlist…"_t));
+                });
+                showTracks (std::move (liked), likedErr, "Titres likés"_t);
+            });
+            addText ("Double-cliquez sur un morceau : il est lancé sur votre appareil Spotify (application Spotify ouverte, "_t
+                     "compte Premium nécessaire pour le pilotage à distance ; sinon le morceau s'ouvre dans Spotify)."_t);
+        }
         addButton ("Importer mes playlists dans la bibliothèque"_t, [safe, provider]
         {
             if (safe == nullptr) return;
@@ -394,12 +463,12 @@ void SourcePage::buildProvider (MediaProvider& p)
                         {
                             if (safe) safe->ctx.showMessage (name + " : " + juce::String (n) + " morceaux");
                         });
-                    if (lists.empty()) safe->ctx.showMessage ("Aucune playlist"_t);
+                    if (lists.empty()) safe->ctx.showMessage (provider->lastError.isNotEmpty() ? provider->lastError : juce::String ("Aucune playlist"_t));
                 });
             });
         });
         tracks = std::make_unique<TrackList> (ctx);
-        tracks->setTracks (ctx.library().getTracks ("artist", 3000, id), true, true);
+        if (id != "spotify") tracks->setTracks (ctx.library().getTracks ("artist", 3000, id), true, true);
         contentComp.addAndMakeVisible (*tracks);
     }
 }

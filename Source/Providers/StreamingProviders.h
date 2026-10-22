@@ -100,6 +100,8 @@ public:
     std::vector<TrackInfo> searchTracks (const juce::String& query, int limit) override;
     std::vector<PlaylistInfo> getPlaylists() override;
     std::vector<TrackInfo> getPlaylistTracks (const juce::String& playlistId) override;
+    /** "Titres likés" (GET /me/tracks), most recent first. */
+    std::vector<TrackInfo> getLikedTracks (int maxTracks = 500);
     bool playExternally (const TrackInfo& track, juce::String& error) override;
 
     static juce::String codeChallenge (const juce::String& verifier);

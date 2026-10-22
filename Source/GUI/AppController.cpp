@@ -253,7 +253,8 @@ void AppController::playTracks (const std::vector<TrackInfo>& tracks, int startI
                 externalTrack = chosen;
                 externalPlaying = true;
                 onTrackChanged();
-                showMessage ("Lecture confiée à "_t + p->getDisplayName() + " (hors moteur bit-perfect)");
+                showMessage (p->lastError.isNotEmpty() ? p->lastError
+                                                       : "Lecture confiée à "_t + p->getDisplayName() + " (hors moteur bit-perfect)");
             }
             else showMessage (p->getDisplayName() + " : " + err);
         }
