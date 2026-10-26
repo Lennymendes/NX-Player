@@ -190,6 +190,12 @@ void PluginManager::rescan()
 
     for (auto& root : folders)
     {
+        // Plug-ins removed while their library was loaded (Windows): finish the job now.
+        for (auto kind : { "UI", "DSP" })
+            for (const auto& e : juce::RangedDirectoryIterator (root.getChildFile (kind), false, "*", juce::File::findDirectories))
+                if (e.getFile().getChildFile (".nx-uninstalled").exists() && ! e.getFile().deleteRecursively())
+                    e.getFile().getChildFile (".nx-uninstalled").create();   // still locked: try again next time
+
         for (const auto& e : juce::RangedDirectoryIterator (root.getChildFile ("UI"), false, "*", juce::File::findDirectories))
         {
             const auto m = juce::JSON::parse (e.getFile().getChildFile ("manifest.json"));

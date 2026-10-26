@@ -433,9 +433,9 @@ bool MarketplacePage::installFromCatalogue (const juce::String& id, juce::String
     if (! src.isDirectory()) { error = "plugin introuvable dans le catalogue"; return false; }
     bool isDsp = false;
     for (auto& p : catalogue->getDspPlugins()) if (p.id == id) isDsp = true;
-    const auto dest = userPluginsRoot().getChildFile (isDsp ? "DSP" : "UI").getChildFile (src.getFileName());
+    auto dest = userPluginsRoot().getChildFile (isDsp ? "DSP" : "UI").getChildFile (src.getFileName());
     dest.getParentDirectory().createDirectory();
-    if (dest.exists()) dest.deleteRecursively();
+    if (dest.exists() && ! dest.deleteRecursively()) dest = dest.getNonexistentSibling (false);   // leftover still locked
     if (! src.copyDirectoryTo (dest)) { error = "copie impossible vers "_t + dest.getFullPathName(); return false; }
     auto& m = ctx.plugins();
     m.rescan();
@@ -453,8 +453,15 @@ bool MarketplacePage::removeUserPlugin (const juce::String& id, juce::String& er
     m.setDspPluginEnabled (id, false);
     if (! folder.deleteRecursively())
     {
-        error = "fermez NX Player puis supprimez "_t + folder.getFullPathName();
-        return false;
+        // Windows keeps a loaded DLL locked: remove the manifest (the plug-in disappears now) and let the next
+        // launch delete what is left.
+        folder.getChildFile ("manifest.json").deleteFile();
+        if (folder.getChildFile ("manifest.json").exists())
+        {
+            error = "fermez NX Player puis supprimez "_t + folder.getFullPathName();
+            return false;
+        }
+        folder.getChildFile (".nx-uninstalled").create();
     }
     m.rescan();
     return true;
