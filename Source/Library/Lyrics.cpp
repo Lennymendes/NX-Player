@@ -128,4 +128,100 @@ std::optional<Lyrics> fetchLrclib (const juce::String& artist, const juce::Strin
     return l;
 }
 
+namespace
+{
+    juce::String getText (const juce::URL& url, int& status)
+    {
+        status = 0;
+        auto stream = url.createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                                                 .withConnectionTimeoutMs (6000)
+                                                 .withExtraHeaders ("User-Agent: NX Player/" NX_VERSION " (https://github.com/Lennymendes/NX-Player)")
+                                                 .withStatusCode (&status));
+        return stream != nullptr ? stream->readEntireStreamAsString() : juce::String();
+    }
+}
+
+juce::String cleanTitleForLyrics (const juce::String& title)
+{
+    auto t = title;
+    for (auto open : { " (", " [", " - " })
+    {
+        const auto lower = t.toLowerCase();
+        const int i = lower.indexOf (open);
+        if (i <= 0) continue;
+        const auto rest = lower.substring (i);
+        for (auto w : { "remaster", "live", "feat", "ft.", "version", "mono", "stereo", "edit", "mix", "deluxe", "bonus", "hi-res", "24" })
+            if (rest.contains (w)) { t = t.substring (0, i); break; }
+    }
+    return t.trim();
+}
+
+juce::String mainArtistForLyrics (const juce::String& artist)
+{
+    auto a = artist;
+    for (auto sep : { " feat.", " feat ", " ft.", " & ", ", ", "; ", " x ", " / " })
+    {
+        const int i = a.toLowerCase().indexOf (sep);
+        if (i > 0) a = a.substring (0, i);
+    }
+    return a.trim();
+}
+
+std::optional<Lyrics> searchLrclib (const juce::String& artist, const juce::String& title, double duration)
+{
+    juce::URL url ("https://lrclib.net/api/search");
+    url = url.withParameter ("track_name", title).withParameter ("artist_name", artist);
+    int status = 0;
+    const auto json = juce::JSON::parse (getText (url, status));
+    auto* results = json.getArray();
+    if (status != 200 || results == nullptr) return std::nullopt;
+
+    const juce::var* best = nullptr;
+    double bestScore = 1.0e9;
+    for (auto& r : *results)
+    {
+        const bool synced = r.getProperty ("syncedLyrics", {}).toString().isNotEmpty();
+        if (! synced && r.getProperty ("plainLyrics", {}).toString().isEmpty()) continue;
+        const double d = (double) r.getProperty ("duration", 0.0);
+        if (duration > 0 && d > 0 && std::abs (d - duration) > 8.0) continue;   // another version of the song
+        const double score = (synced ? 0.0 : 100.0) + (duration > 0 && d > 0 ? std::abs (d - duration) : 50.0);
+        if (score < bestScore) { bestScore = score; best = &r; }
+    }
+    if (best == nullptr) return std::nullopt;
+    const auto synced = best->getProperty ("syncedLyrics", {}).toString();
+    Lyrics l = parseLrc (synced.isNotEmpty() ? synced : best->getProperty ("plainLyrics", {}).toString());
+    l.source = "LRCLIB";
+    if (l.isEmpty()) return std::nullopt;
+    return l;
+}
+
+std::optional<Lyrics> fetchLyricsOvh (const juce::String& artist, const juce::String& title)
+{
+    if (artist.isEmpty() || title.isEmpty()) return std::nullopt;
+    const juce::URL url ("https://api.lyrics.ovh/v1/" + juce::URL::addEscapeChars (artist, false) + "/" + juce::URL::addEscapeChars (title, false));
+    int status = 0;
+    const auto json = juce::JSON::parse (getText (url, status));
+    auto text = json.getProperty ("lyrics", {}).toString().replace ("\r\n", "\n").trim();
+    if (status != 200 || text.isEmpty()) return std::nullopt;
+    // lyrics.ovh sometimes prefixes "Paroles de la chanson X par Y" on the first line
+    if (text.upToFirstOccurrenceOf ("\n", false, false).startsWithIgnoreCase ("Paroles de la chanson"))
+        text = text.fromFirstOccurrenceOf ("\n", false, false).trim();
+    Lyrics l;
+    l.plain = text;
+    l.synced = false;
+    l.source = "lyrics.ovh";
+    return l;
+}
+
+std::optional<Lyrics> fetchOnlineLyrics (const juce::String& artist, const juce::String& title, const juce::String& album, double duration)
+{
+    if (auto l = fetchLrclib (artist, title, album, duration)) return l;
+    const auto cleanTitle = cleanTitleForLyrics (title), mainArtist = mainArtistForLyrics (artist);
+    if (cleanTitle != title || mainArtist != artist)
+        if (auto l = fetchLrclib (mainArtist, cleanTitle, {}, duration)) return l;
+    if (auto l = searchLrclib (mainArtist, cleanTitle, duration)) return l;
+    if (auto l = fetchLyricsOvh (mainArtist, cleanTitle)) return l;
+    return std::nullopt;
+}
+
 } // namespace nx

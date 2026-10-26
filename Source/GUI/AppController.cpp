@@ -76,6 +76,12 @@ AppController::AppController (Options options)
     audioAnalyzer = std::make_unique<AudioAnalyzer> (eng->getAnalyzer());
     artworkCache = std::make_unique<ArtworkCache> (lib, dataDir.getChildFile ("ArtworkWeb"));
 
+    // Offline copies of NAS / Jellyfin tracks
+    downloadManager = std::make_unique<DownloadManager> (lib);
+    if (const auto folder = appSettings.get ("downloadFolder").toString(); folder.isNotEmpty())
+        downloadManager->setFolder (juce::File (folder));
+    downloadManager->onMessage = [this] (const juce::String& m) { showMessage (m); };
+
     // Themes
     themeManager.setSearchFolders ({ resourcesDir.getChildFile ("Themes"), dataDir.getChildFile ("Themes") });
     themeManager.onThemeChanged = [this] (const Theme& t)
@@ -116,7 +122,7 @@ AppController::AppController (Options options)
 
     // Engine notifications (message thread)
     eng->onTrackChanged = [this] { onTrackChanged(); };
-    eng->onStateChanged = [this] { if (auto* m = getMainComponent()) m->stateChanged(); };
+    eng->onStateChanged = [this] { if (auto* m = getMainComponent()) m->stateChanged(); updateSystemNowPlaying (true); };
     eng->onSignalPathChanged = [this] { if (auto* m = getMainComponent()) m->stateChanged(); };
     eng->onQueueFinished = [this] { if (repeatOn && ! queueTracks.empty()) eng->playIndex (0); };
     eng->onError = [this] (const juce::String& e) { showMessage (e); };
@@ -136,17 +142,29 @@ AppController::AppController (Options options)
         mainWindow = std::make_unique<MainWindow> (*this, lookAndFeel);
         libScanner->start (3000);
 
-        // NAS: reconnect the servers known from last time, then look for new ones (background).
-        if (auto* upnp = dynamic_cast<UpnpProvider*> (unified->getProvider ("upnp")))
+        // Media keys and the system's "Now Playing" (works with NX Player in the background)
+        MediaControls::Callbacks cb;
+        cb.play = [this] { eng->play(); };
+        cb.pause = [this] { eng->pause(); };
+        cb.toggle = [this] { eng->togglePlayPause(); };
+        cb.next = [this] { eng->next(); };
+        cb.previous = [this] { eng->previous(); };
+        cb.seek = [this] (double t) { eng->seek (t); updateSystemNowPlaying (true); };
+        void* handle = mainWindow->getPeer() != nullptr ? mainWindow->getPeer()->getNativeHandle() : nullptr;
+        mediaControls = MediaControls::create (std::move (cb), handle);
+
+        // NAS: no network scan at startup (macOS would ask for the local network permission before the user
+        // even looks at the NAS). Only the servers already configured are reconnected; discovery runs when the
+        // NAS page is opened.
+        juce::StringArray known;
+        if (auto* arr = appSettings.get ("nasServers").getArray()) for (auto& v : *arr) known.add (v.toString());
+        if (auto* upnp = dynamic_cast<UpnpProvider*> (unified->getProvider ("upnp")); upnp != nullptr && ! known.isEmpty())
         {
-            juce::StringArray known;
-            if (auto* arr = appSettings.get ("nasServers").getArray()) for (auto& v : *arr) known.add (v.toString());
             std::weak_ptr<int> weak = alive;
             nasDiscoveryRunning = true;
             juce::Thread::launch ([this, upnp, known, weak]
             {
                 for (auto& loc : known) upnp->addServerFromLocation (loc);
-                upnp->discover (3000);
                 nasDiscoveryRunning = false;
                 juce::MessageManager::callAsync ([this, weak]
                 {
@@ -170,6 +188,7 @@ AppController::AppController (Options options)
 AppController::~AppController()
 {
     stopTimer();
+    mediaControls.reset();
     for (int i = 0; i < 400 && nasDiscoveryRunning.load(); ++i) juce::Thread::sleep (10);   // the NAS thread uses the providers
     if (mainWindow) appSettings.set ("windowBounds", mainWindow->getWindowStateAsString());
     eng->stop();
@@ -181,6 +200,7 @@ AppController::~AppController()
     // The engine's DSP chains call into plug-in libraries: release them before the plug-in manager unloads those.
     audioAnalyzer.reset();
     eng.reset();
+    downloadManager.reset();
 }
 
 MainComponent* AppController::getMainComponent()
@@ -399,8 +419,50 @@ void AppController::openFiles (const juce::StringArray& paths)
 }
 
 //==============================================================================
+void AppController::updateSystemNowPlaying (bool force)
+{
+    if (mediaControls == nullptr) return;
+    const double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    const auto* t = currentTrack();
+    // Without a forced update, refresh every 5 s (position drift) or while the artwork is still loading.
+    const bool artworkPending = t != nullptr && t->artworkKey.isNotEmpty() && nowPlayingArtworkSent != t->artworkKey;
+    if (! force && now - lastNowPlayingUpdate < 5.0 && ! (artworkPending && now - lastNowPlayingUpdate > 0.5)) return;
+    lastNowPlayingUpdate = now;
+
+    NowPlayingInfo info;
+    if (t != nullptr)
+    {
+        info.hasTrack = true;
+        info.title = t->title;
+        info.artist = t->displayArtist();
+        info.album = t->album;
+        info.duration = t->duration;
+        info.position = externalPlaying ? 0.0 : eng->getPositionSeconds();
+        info.playing = eng->getState() == PlaybackEngine::State::Playing;
+        info.artworkId = nowPlayingArtworkSent;
+        if (artworkPending)
+        {
+            const auto img = artworkCache->get (t->artworkKey, 600);
+            if (img.isValid())
+            {
+                juce::MemoryOutputStream png;
+                juce::PNGImageFormat().writeImageToStream (img, png);
+                info.artworkPng = png.getMemoryBlock();
+                info.artworkId = nowPlayingArtworkSent = t->artworkKey;
+            }
+        }
+    }
+    mediaControls->update (info);
+}
+
 void AppController::onTrackChanged()
 {
+    if (mediaControls != nullptr && nowPlayingArtworkSent.isNotEmpty())
+    {
+        const auto* t = currentTrack();
+        if (t == nullptr || t->artworkKey != nowPlayingArtworkSent) nowPlayingArtworkSent = "none:" + juce::String (juce::Random::getSystemRandom().nextInt());
+    }
+    updateSystemNowPlaying (true);
     if (auto* m = getMainComponent()) m->trackChanged();
     if (miniWindow) miniWindow->getMini().trackChanged();
     if (const auto* t = currentTrack())
@@ -427,7 +489,7 @@ void AppController::loadLyrics (const TrackInfo& t)
     std::weak_ptr<int> token = alive;
     juce::Thread::launch ([this, gen, artist, title, album, duration, token]
     {
-        auto found = fetchLrclib (artist, title, album, duration);
+        auto found = fetchOnlineLyrics (artist, title, album, duration);   // LRCLIB, then lyrics.ovh
         juce::MessageManager::callAsync ([this, gen, found, token]
         {
             if (token.expired() || gen != lyricsGeneration) return;
@@ -446,6 +508,7 @@ void AppController::timerCallback()
     audioAnalyzer->update (dt, playing);
 
     pluginManager.setState ("time", now);
+    updateSystemNowPlaying (false);
     pluginManager.setState ("audio", audioAnalyzer->toVar());
     auto* player = new juce::DynamicObject();
     if (const auto* t = currentTrack())

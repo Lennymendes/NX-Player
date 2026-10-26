@@ -35,7 +35,7 @@ private:
     struct Header : juce::Component { ListingPage& page; explicit Header (ListingPage& p) : page (p) {} void paint (juce::Graphics&) override; };
     Header header { *this };
     ArtworkView heroArt;
-    juce::TextButton playAll { "Lire" }, shuffleAll { "Aléatoire"_t }, cta;
+    juce::TextButton playAll { "Lire" }, shuffleAll { "Aléatoire"_t }, downloadAll { "Télécharger"_t }, cta;
     std::unique_ptr<PluginSlot> homeSlot;
 };
 
@@ -64,6 +64,7 @@ private:
     std::unique_ptr<AlbumGrid> albums;
     std::map<juce::String, std::vector<UpnpEntry>> upnpCache;   // "udn|objectId" -> children
     juce::StringArray upnpLoading;
+    bool autoDiscoveryDone = false, autoDiscoveryRunning = false;
 };
 
 class SettingsPage : public ScrollPage

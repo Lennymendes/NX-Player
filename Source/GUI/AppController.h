@@ -8,6 +8,8 @@
 #include "../Library/Library.h"
 #include "../Library/LibraryScanner.h"
 #include "../Library/Lyrics.h"
+#include "../Library/Downloads.h"
+#include "../Platform/MediaControls.h"
 #include "../Providers/MediaProvider.h"
 #include "../Ext/ThemeEngine.h"
 #include "../Ext/PluginManager.h"
@@ -47,6 +49,7 @@ public:
     ArtworkCache& artwork() override           { return *artworkCache; }
     LibraryScanner& scanner() override         { return *libScanner; }
     AppSettings& settings() override           { return appSettings; }
+    DownloadManager& downloads() override      { return *downloadManager; }
 
     void playTracks (const std::vector<TrackInfo>& tracks, int startIndex) override;
     void enqueue (const std::vector<TrackInfo>& tracks) override;
@@ -81,6 +84,7 @@ private:
     void onTrackChanged();
     void loadLyrics (const TrackInfo& t);
     void saveEngineSettings();
+    void updateSystemNowPlaying (bool force);
     void loadEngineSettings();
 
     juce::File dataDir, resourcesDir;
@@ -92,6 +96,10 @@ private:
     std::unique_ptr<PlaybackEngine> eng;
     std::unique_ptr<AudioAnalyzer> audioAnalyzer;
     std::unique_ptr<ArtworkCache> artworkCache;
+    std::unique_ptr<DownloadManager> downloadManager;
+    std::unique_ptr<MediaControls> mediaControls;
+    double lastNowPlayingUpdate = 0.0;
+    juce::String nowPlayingArtworkSent;
     ThemeManager themeManager;
     PluginManager pluginManager;
     NXLookAndFeel lookAndFeel;

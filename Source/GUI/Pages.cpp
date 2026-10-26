@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "Pages.h"
+#include "../Library/Downloads.h"
 #include "../Providers/StreamingProviders.h"
 #include "../Library/LibraryScanner.h"
 #include "../Ext/PluginManager.h"
@@ -18,7 +19,14 @@ ListingPage::ListingPage (AppContext& c) : ScrollPage (c), grid (c), list (c), h
     contentComp.addChildComponent (heroArt);
     contentComp.addChildComponent (playAll);
     contentComp.addChildComponent (shuffleAll);
+    contentComp.addChildComponent (downloadAll);
     contentComp.addChildComponent (cta);
+    downloadAll.setTooltip ("Copier ces morceaux du serveur dans le dossier de téléchargement, pour l'écoute hors-ligne"_t);
+    downloadAll.onClick = [this]
+    {
+        const int n = ctx.downloads().enqueue (heroTracks);
+        ctx.showMessage (n > 0 ? "Téléchargement de "_t + juce::String (n) + " morceau(x)" : juce::String ("Déjà disponible hors-ligne"_t));
+    };
     cta.setToggleState (true, juce::dontSendNotification);
     cta.onClick = [this] { if (ctaAction) ctaAction(); };
     playAll.setToggleState (true, juce::dontSendNotification);
@@ -71,6 +79,9 @@ void ListingPage::layoutContent (int width)
     heroArt.setVisible (hero);
     playAll.setVisible (hero || ! heroTracks.empty());
     shuffleAll.setVisible (hero || ! heroTracks.empty());
+    bool remote = false;
+    for (auto& t : heroTracks) remote = remote || DownloadManager::canDownload (t);
+    downloadAll.setVisible (remote && playAll.isVisible());
     if (hero)
     {
         const int art = juce::jmin (240, inner / 3);
@@ -79,6 +90,7 @@ void ListingPage::layoutContent (int width)
         header.setBounds (pad, y, inner, art);
         playAll.setBounds (pad + art + 28, y + art - 44, 120, 38);
         shuffleAll.setBounds (pad + art + 160, y + art - 44, 130, 38);
+        downloadAll.setBounds (pad + art + 302, y + art - 44, 140, 38);
         y += art + 28;
     }
     else
@@ -89,6 +101,7 @@ void ListingPage::layoutContent (int width)
         {
             playAll.setBounds (pad, y, 120, 36);
             shuffleAll.setBounds (pad + 132, y, 130, 36);
+            downloadAll.setBounds (pad + 274, y, 140, 36);
             y += 52;
         }
     }
@@ -299,6 +312,21 @@ void SourcePage::buildUpnp()
                 });
             });
         });
+        addButton ("Télécharger pour l'écoute hors-ligne"_t, [safe, upnp, server, objectId, app]
+        {
+            app->showMessage ("Préparation du téléchargement…"_t);
+            juce::Thread::launch ([safe, upnp, server, objectId, app]
+            {
+                auto all = upnp->collectTracks (server, objectId, 5000);
+                juce::MessageManager::callAsync ([safe, all, app]
+                {
+                    if (safe == nullptr) return;
+                    const int n = app->downloads().enqueue (all);
+                    app->showMessage (n > 0 ? "Téléchargement de "_t + juce::String (n) + " morceau(x) vers "_t + app->downloads().getFolder().getFullPathName()
+                                            : juce::String ("Rien à télécharger (déjà hors-ligne ?)"_t));
+                });
+            });
+        });
         addButton ("Importer dans la bibliothèque"_t, [safe, upnp, server, objectId, app]
         {
             auto* lib = &app->library();
@@ -341,9 +369,8 @@ void SourcePage::buildUpnp()
     }
 
     // ---- server list ----------------------------------------------------------------------------
-    addButton ("Rechercher les serveurs du réseau"_t, [safe, upnp, app]
+    auto searchNetwork = [safe, upnp, app]
     {
-        app->showMessage ("Recherche des serveurs UPnP / DLNA…"_t);
         juce::Thread::launch ([safe, upnp, app]
         {
             const auto found = upnp->discover (3000);
@@ -353,10 +380,19 @@ void SourcePage::buildUpnp()
                 if (safe == nullptr) return;
                 app->saveNasServers();
                 app->showMessage (found.empty() ? err : juce::String ((int) found.size()) + " serveur(s) trouvé(s)"_t);
-                safe->setSource ("upnp");
+                safe->autoDiscoveryRunning = false;
+                if (safe->sourceId == "upnp" && safe->sourceArg.isEmpty()) safe->setSource ("upnp");
             });
         });
-    });
+    };
+    addButton ("Rechercher les serveurs du réseau"_t, [this, searchNetwork] { autoDiscoveryRunning = true; searchNetwork(); });
+    // First visit of the NAS page in this session: look for servers automatically (only now, not at startup).
+    if (! autoDiscoveryDone && upnp->getServers().empty())
+    {
+        autoDiscoveryDone = autoDiscoveryRunning = true;
+        searchNetwork();
+    }
+    if (autoDiscoveryRunning) addText ("Recherche des serveurs UPnP / DLNA du réseau…"_t);
 
     auto* address = addField ("Adresse IP du NAS ou URL de description (ex. 192.168.1.20)"_t, "__nas_address", true);
     address->setPasswordCharacter (0);
@@ -385,7 +421,7 @@ void SourcePage::buildUpnp()
     addButton ("Ajouter ce serveur"_t, connect);
 
     const auto servers = upnp->getServers();
-    if (servers.empty())
+    if (servers.empty() && ! autoDiscoveryRunning)
     {
         addText ("Aucun serveur trouvé pour l'instant. Vérifiez que le serveur UPnP / DLNA du NAS est activé (MinimServer, "_t
                  "Synology Media Server, Asset…) ; si votre réseau filtre la découverte automatique, entrez l'adresse IP du NAS ci-dessus."_t);
@@ -739,62 +775,30 @@ void SettingsPage::refresh()
     row ("Volume numérique : 100 % = bit-perfect"_t, nullptr, 28);
 
     section ("Paroles");
-    row ("Chercher les paroles synchronisées en ligne (LRCLIB)"_t, toggle ((bool) ctx.settings().get ("lyricsOnline", true), [this] (bool v) { ctx.settings().set ("lyricsOnline", v); }), 36,
-         "Artiste, titre, album et durée sont envoyés à lrclib.net. Les fichiers .lrc et les paroles des tags sont toujours prioritaires."_t);
+    row ("Chercher les paroles en ligne (LRCLIB, puis lyrics.ovh)"_t, toggle ((bool) ctx.settings().get ("lyricsOnline", true), [this] (bool v) { ctx.settings().set ("lyricsOnline", v); }), 36,
+         "Fichier .lrc et tags d'abord, puis LRCLIB (paroles synchronisées), puis lyrics.ovh en secours (texte seul). Artiste, titre, album et durée sont envoyés à ces services."_t);
 
-    section ("Thèmes"_t);
-    for (auto& t : ctx.themes().getThemes())
+    section ("Téléchargements"_t);
     {
-        const bool current = t.id == ctx.theme().id;
-        auto* b = button (current ? "Actif" : "Appliquer", [this, id = t.id] { ctx.applyTheme (id); refresh(); });
-        b->setToggleState (current, juce::dontSendNotification);
-        row (t.name + "  ·  "_t + t.author, b, 38, t.description);
+        const auto folder = ctx.downloads().getFolder();
+        row ("Dossier de téléchargement (NAS / Jellyfin)"_t, button (folder.getFullPathName(), [this]
+        {
+            auto chooser = std::make_shared<juce::FileChooser> ("Dossier de téléchargement"_t, ctx.downloads().getFolder());
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this, chooser] (const juce::FileChooser& fc)
+            {
+                const auto dir = fc.getResult();
+                if (! dir.isDirectory()) return;
+                ctx.downloads().setFolder (dir);
+                ctx.settings().set ("downloadFolder", dir.getFullPathName());
+                ctx.showMessage ("Téléchargements : "_t + dir.getFullPathName());
+                refresh();
+            });
+        }), 36, "Les morceaux et albums téléchargés depuis un serveur sont copiés ici (Artiste / Album / fichier original) "_t
+                "puis ajoutés à la bibliothèque, disponibles hors-ligne."_t);
     }
-    row ("Importer / exporter", button ("Importer un thème…"_t, [this]
-    {
-        auto chooser = std::make_shared<juce::FileChooser> ("Thème NX (.nxtheme)"_t, juce::File(), "*.nxtheme;*.zip");
-        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectDirectories,
-                              [this, chooser] (const juce::FileChooser& fc)
-        {
-            if (fc.getResult() == juce::File()) return;
-            juce::String err;
-            const auto id = ctx.themes().importTheme (fc.getResult(), err);
-            if (id.isEmpty()) ctx.showMessage ("Import impossible : " + err);
-            else { ctx.applyTheme (id); refresh(); }
-        });
-    }));
-    row ({}, button ("Exporter le thème actif…"_t, [this]
-    {
-        auto chooser = std::make_shared<juce::FileChooser> ("Exporter", juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile (ctx.theme().id + ".nxtheme"), "*.nxtheme");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode, [this, chooser] (const juce::FileChooser& fc)
-        {
-            if (fc.getResult() != juce::File() && ctx.themes().exportTheme (ctx.theme().id, fc.getResult())) ctx.showMessage ("Thème exporté"_t);
-        });
-    }), 38, "Les thèmes se modifient à chaud : éditez theme.css pendant que NX Player tourne."_t);
 
-    section ("Plug-ins d'interface");
-    for (auto& p : ctx.plugins().getUiPlugins())
-        row (p.name + "  ·  v"_t + p.version, toggle (p.enabled, [this, id = p.id] (bool v) { ctx.plugins().setUiPluginEnabled (id, v); }), 36,
-             p.description + "  (emplacements : " + p.slots.joinIntoString (", ") + ")");
-
-    section ("Plug-ins DSP");
-    for (auto& p : ctx.plugins().getDspPlugins())
-    {
-        row (p.name, toggle (p.enabled, [this, id = p.id] (bool v) { ctx.plugins().setDspPluginEnabled (id, v); }), 36,
-             p.error.isNotEmpty() ? "Indisponible : " + p.error : p.description);
-        for (int i = 0; i < (int) p.params.size(); ++i)
-        {
-            const auto& prm = p.params[(size_t) i];
-            auto* sl = new juce::Slider (juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
-            sl->setRange (prm.min_value, prm.max_value, (prm.max_value - prm.min_value) / 200.0);
-            sl->setValue (ctx.plugins().getDspParameter (p.id, i), juce::dontSendNotification);
-            sl->setTextValueSuffix (juce::String (" ") + juce::String::fromUTF8 (prm.unit));
-            sl->setColour (juce::Slider::textBoxTextColourId, ctx.theme().textCol());
-            sl->setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-            sl->onDragEnd = [this, sl, id = p.id, i] { ctx.plugins().setDspParameter (id, i, sl->getValue()); };
-            row ("   " + juce::String::fromUTF8 (prm.name), sl, 32);
-        }
-    }
+    section ("Personnalisation"_t);
+    row ("Thèmes et plug-ins : barre latérale › Personnaliser (Extensions & Thèmes, Plugins utilisateur)"_t, nullptr, 28);
 
     section ("À propos"_t);
     row ("NX Player " NX_VERSION " · NX Audio Suite · licence MIT"_t, nullptr, 26);

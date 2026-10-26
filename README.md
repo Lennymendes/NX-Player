@@ -45,7 +45,7 @@ les archives sur une étiquette `v*`.
 "build/NXPlayer_artefacts/Release/NX Player.app/Contents/MacOS/NX Player" --selftest
 ```
 
-20 sections, 158 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
+21 sections, 169 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
 captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 
 | # | Section | Ce qui est prouvé |
@@ -63,6 +63,7 @@ captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 | 206 | NAS | serveur HTTP local → flux progressif → moteur → DAC : bit-perfect |
 | 207 | OAuth | serveur de retour local : préconnexion du navigateur, /favicon.ico, code reçu |
 | 208 | NAS UPnP / DLNA | faux NAS sur 127.0.0.1 : M-SEARCH unicast, Browse paginé (serveur plafonné à 2 par page), meilleure ressource, erreurs SOAP, import, lecture bit-perfect 24 / 96 |
+| 209 | Hors-ligne | téléchargement depuis un faux NAS : fichier original copié octet pour octet (Artiste / Album / NN Titre), pochette, ajout à la bibliothèque, badge hors-ligne relié à l'original |
 | 301 | Interface | chaque page rendue hors écran (NAS, galerie, plug-ins), thème à chaud, installation / retrait d'un plug-in du catalogue, historique ‹ ›, barre latérale masquée |
 | 401–403 | Extensions | CSS / var(), rechargement à chaud, export / import ; plug-ins JS (rendu, erreurs, setLayout, rechargement) ; plug-in DSP C dans la chaîne |
 
@@ -120,7 +121,9 @@ le badge de qualité de la barre de lecture.
 
 Testé avec un faux serveur qui se comporte comme les vrais (pages plafonnées, plusieurs `<res>`, erreurs SOAP).
 Serveurs visés : MinimServer, Asset UPnP, Synology Media Server, QNAP, JRiver, Jellyfin, foobar2000. Sous macOS,
-le système demande l'autorisation « Réseau local » au premier lancement : acceptez-la, sinon aucun serveur n'apparaît.
+le système demande l'autorisation « Réseau local » la première fois que vous ouvrez la page NAS (aucun scan au
+démarrage) : acceptez-la, sinon aucun serveur n'apparaît. L'app est signée ad hoc avec un identifiant fixe
+(`com.nxaudio.nxplayer`) pour que macOS retienne la réponse ; une nouvelle version téléchargée peut la redemander une fois.
 
 Les connecteurs de streaming restent dans le code (`Source/Providers/StreamingProviders.*`, tests 205 et 207) ;
 avec `-DNX_ENABLE_STREAMING=ON` ils reviennent dans la barre latérale. NX Player n'extrait aucun identifiant des
@@ -142,10 +145,23 @@ Identifiants des services (si le streaming est réactivé) : options CMake ou se
 | Paroles | Cmd/Ctrl + L |
 | Mini-lecteur | Cmd/Ctrl + M |
 | Page précédente / suivante (‹ ›) | Cmd/Ctrl + [ / ], ou Alt + ← / → |
+| Touches multimédia du clavier (lecture, suivant, précédent) | aussi quand NX Player est en arrière-plan |
 | Masquer / afficher la barre latérale | Cmd/Ctrl + B |
 
 Volume : à 100 % le flux reste bit-perfect ; en dessous, volume numérique 64 bits + dither. Double-clic sur un
 morceau pour le lire, clic droit pour la file d'attente, l'album, l'artiste, les crédits.
+
+**Touches multimédia et « À l'écoute » du système** : macOS (`MPRemoteCommandCenter` / `MPNowPlayingInfoCenter`,
+Centre de contrôle, Touch Bar, casques) et Windows (`SystemMediaTransportControls` : touches du clavier, panneau du
+volume, écran de verrouillage) reçoivent le titre, l'artiste, l'album, la durée, la position et la pochette.
+
+**Hors-ligne** : sur un morceau d'un NAS / Jellyfin, l'icône ↓ (ou clic droit › Télécharger pour l'écoute hors-ligne,
+ou « Télécharger » sur un album / un dossier du NAS) copie le fichier original en arrière-plan dans le dossier choisi
+dans Réglages › Téléchargements (par défaut `Musique/NX Player`, rangé Artiste / Album). La progression s'affiche dans
+la liste et en bas de la barre latérale ; le morceau rejoint ensuite la bibliothèque avec la mention « Hors-ligne ».
+
+**Paroles** : fichier `.lrc`, tags, puis LRCLIB (exact, puis titre nettoyé, puis recherche par durée), puis
+lyrics.ovh en secours (texte non synchronisé).
 
 **Extensions & Thèmes** (barre latérale › Personnaliser) : chaque thème et chaque plug-in est une carte avec un
 aperçu en direct ; un clic sur l'interrupteur l'active ou le désactive, un clic sur un thème l'applique.

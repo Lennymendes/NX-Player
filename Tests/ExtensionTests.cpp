@@ -384,7 +384,7 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
     }
 
     app.navigate ({ nx::PageId::Settings });
-    t.check (shoot ("09_reglages") > 30, "Réglages (sortie, DSD, thèmes, plug-ins)"_t);
+    t.check (shoot ("09_reglages") > 30, "Réglages (sortie, DSD, paroles, téléchargements)"_t);
     app.plugins().setUiPluginEnabled ("nx.analog-vu", true);
     app.navigate ({ nx::PageId::NowPlaying });
     t.check (shoot ("10_vu_metres") > 60, "plug-in VU-mètres dans « En cours »"_t);

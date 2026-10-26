@@ -2,6 +2,7 @@
 #include "Sidebar.h"
 #include "../Providers/MediaProvider.h"
 #include "../Ext/PluginManager.h"
+#include "../Library/Downloads.h"
 
 namespace nx
 {
@@ -14,10 +15,16 @@ Sidebar::Sidebar (AppContext& c) : ctx (c), pluginSlot (c, "sidebar.bottom")
     search.setJustification (juce::Justification::centredLeft);
     search.onReturnKey = [this] { if (search.getText().trim().isNotEmpty()) ctx.navigate ({ PageId::Search, search.getText().trim() }); };
     search.onTextChange = [this] { startTimer (350); };
+    search.onEscapeKey = [this] { if (auto* p = getParentComponent()) p->grabKeyboardFocus(); };
     addAndMakeVisible (search);
     addAndMakeVisible (pluginSlot);
+    ctx.downloads().addChangeListener (this);
     refresh();
 }
+
+Sidebar::~Sidebar() { ctx.downloads().removeChangeListener (this); }
+
+int Sidebar::bottomReserve() const { return 50 + (ctx.downloads().getPendingCount() > 0 ? 46 : 0); }
 
 void Sidebar::timerCallback()
 {
@@ -68,7 +75,7 @@ void Sidebar::resized()
     search.setBounds (r.removeFromTop (34));
     r.removeFromTop (8);
     listTop = r.getY();
-    auto bottom = r.removeFromBottom (36);
+    auto bottom = r.removeFromBottom (36 + (ctx.downloads().getPendingCount() > 0 ? 46 : 0));
     juce::ignoreUnused (bottom);
     const int ph = pluginSlot.isEmpty() ? 0 : juce::jmin (pluginSlot.getPreferredHeight(), 140);
     pluginSlot.setVisible (ph > 0);
@@ -78,7 +85,7 @@ void Sidebar::resized()
 int Sidebar::itemAt (int y) const
 {
     int pos = listTop - scroll;
-    const int maxY = getHeight() - 50 - (pluginSlot.isVisible() ? pluginSlot.getHeight() : 0);
+    const int maxY = getHeight() - bottomReserve() - (pluginSlot.isVisible() ? pluginSlot.getHeight() : 0);
     for (int i = 0; i < (int) items.size(); ++i)
     {
         const int h = items[(size_t) i].header ? headerHeight : itemHeight;
@@ -100,7 +107,7 @@ void Sidebar::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDet
 {
     int total = 0;
     for (auto& it : items) total += it.header ? headerHeight : itemHeight;
-    const int visible = getHeight() - 50 - (pluginSlot.isVisible() ? pluginSlot.getHeight() : 0) - listTop;
+    const int visible = getHeight() - bottomReserve() - (pluginSlot.isVisible() ? pluginSlot.getHeight() : 0) - listTop;
     scroll = juce::jlimit (0, juce::jmax (0, total - visible), scroll - juce::roundToInt (w.deltaY * 240.0f));
     repaint();
 }
@@ -139,7 +146,7 @@ void Sidebar::paint (juce::Graphics& g)
 
     // items
     g.saveState();
-    const int maxY = getHeight() - 50 - (pluginSlot.isVisible() ? pluginSlot.getHeight() : 0);
+    const int maxY = getHeight() - bottomReserve() - (pluginSlot.isVisible() ? pluginSlot.getHeight() : 0);
     g.reduceClipRegion (0, listTop, getWidth(), maxY - listTop);
     int y = listTop - scroll;
     for (int i = 0; i < (int) items.size(); ++i)
@@ -182,6 +189,31 @@ void Sidebar::paint (juce::Graphics& g)
         y += itemHeight;
     }
     g.restoreState();
+
+    // downloads in progress
+    auto& dl = ctx.downloads();
+    if (const int pending = dl.getPendingCount(); pending > 0)
+    {
+        auto box = juce::Rectangle<int> (16, getHeight() - 46 - 44, getWidth() - 32, 38);
+        const int total = juce::jmax (pending, dl.getSessionTotal());
+        const int doneCount = total - pending;
+        const float overall = ((float) doneCount + dl.getCurrentProgress()) / (float) total;
+        style::drawIcon (g, style::Icon::Download, box.removeFromLeft (20).toFloat().withSizeKeepingCentre (16, 16), t.accent());
+        box.removeFromLeft (8);
+        g.setColour (t.textCol());
+        g.setFont (style::font (12.5f, true));
+        g.drawText ("Téléchargement "_t + juce::String (doneCount + 1) + "/" + juce::String (total) + "  ·  "_t
+                        + juce::String (juce::roundToInt (overall * 100.0f)) + " %",
+                    box.removeFromTop (18), juce::Justification::centredLeft, true);
+        g.setColour (t.textDim());
+        g.setFont (style::font (11.5f));
+        g.drawText (dl.getCurrentTitle(), box.removeFromTop (14), juce::Justification::centredLeft, true);
+        auto bar = juce::Rectangle<float> (16.0f, (float) getHeight() - 50.0f, (float) getWidth() - 32.0f, 3.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.12f));
+        g.fillRoundedRectangle (bar, 1.5f);
+        g.setColour (t.accent());
+        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, overall)), 1.5f);
+    }
 
     // settings
     auto s = juce::Rectangle<int> (10, getHeight() - 46, getWidth() - 20, 34);

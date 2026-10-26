@@ -218,6 +218,7 @@ juce::StringArray UpnpProvider::getKnownLocations() const
 
 bool UpnpProvider::addServerFromLocation (const juce::String& location)
 {
+    const Busy guard (busy);
     auto r = httpRequest ("GET", juce::URL (location), {}, {}, 4000);
     UpnpServer s;
     if (! r.ok()) { lastError = "UPnP : description introuvable ("_t + location + ", HTTP " + juce::String (r.status) + ")"; return false; }
@@ -245,6 +246,7 @@ void UpnpProvider::collectLocations (juce::DatagramSocket& socket, juce::StringA
 
 std::vector<UpnpServer> UpnpProvider::discover (int timeoutMs)
 {
+    const Busy guard (busy);
     // 1) Passive: servers announce themselves (ssdp:alive) on 239.255.255.250:1900.
     juce::DatagramSocket listener (false);
     listener.setEnablePortReuse (true);
@@ -283,6 +285,7 @@ std::vector<UpnpServer> UpnpProvider::discover (int timeoutMs)
 
 std::vector<UpnpServer> UpnpProvider::discoverHost (const juce::String& host, int port, int timeoutMs)
 {
+    const Busy guard (busy);
     juce::DatagramSocket socket (false);
     socket.bindToPort (0);
     juce::StringArray locations;
@@ -309,6 +312,7 @@ std::vector<UpnpServer> UpnpProvider::discoverHost (const juce::String& host, in
 
 UpnpBrowsePage UpnpProvider::soapCall (const UpnpServer& server, const juce::String& action, const juce::String& args)
 {
+    const Busy guard (busy);
     UpnpBrowsePage page;
     const juce::String body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"

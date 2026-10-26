@@ -124,6 +124,7 @@ MainComponent::MainComponent (AppContext& c)
     addChildComponent (queue);
     addChildComponent (toast);
     setWantsKeyboardFocus (true);
+    juce::Desktop::getInstance().addFocusChangeListener (this);
 
     player.onToggleQueue = [this] { queueVisible = ! queueVisible; queue.setVisible (queueVisible); player.queueButton.active = queueVisible; player.queueButton.repaint(); resized(); };
     player.onToggleLyrics = [this]
@@ -139,7 +140,17 @@ MainComponent::MainComponent (AppContext& c)
     navigate ({ PageId::Home });
 }
 
-MainComponent::~MainComponent() = default;
+MainComponent::~MainComponent() { juce::Desktop::getInstance().removeFocusChangeListener (this); }
+
+void MainComponent::globalFocusChanged (juce::Component* focused)
+{
+    // A clicked button, slider or list keeps the keyboard focus and would swallow the space bar: hand the focus
+    // back to the window so that space = play / pause. Text fields keep it (space types a space there).
+    if (focused == nullptr || focused == this || ! isParentOf (focused)) return;
+    if (dynamic_cast<juce::TextEditor*> (focused) != nullptr || dynamic_cast<juce::ComboBox*> (focused) != nullptr) return;
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::MessageManager::callAsync ([safe] { if (safe != nullptr && safe->isShowing()) safe->grabKeyboardFocus(); });
+}
 
 void MainComponent::showSignalPath()
 {
@@ -467,6 +478,7 @@ void MainComponent::timerCallback()
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
     auto& e = ctx.engine();
+    if (k == juce::KeyPress::escapeKey) { grabKeyboardFocus(); return true; }   // leave the search field
     if (k == juce::KeyPress::spaceKey) { e.togglePlayPause(); return true; }
     if (k == juce::KeyPress::rightKey) { e.seek (e.getPositionSeconds() + 10.0); return true; }
     if (k == juce::KeyPress::leftKey)  { e.seek (juce::jmax (0.0, e.getPositionSeconds() - 10.0)); return true; }

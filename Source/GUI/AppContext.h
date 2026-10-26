@@ -15,6 +15,7 @@ class PluginManager;
 class AudioAnalyzer;
 class ArtworkCache;
 class LibraryScanner;
+class DownloadManager;
 
 enum class PageId { Home, Search, RecentlyAdded, Albums, AlbumDetail, Artists, ArtistDetail, Songs, Playlists, PlaylistDetail,
                     Source, NowPlaying, Settings, Marketplace, UserPlugins };
@@ -52,6 +53,7 @@ public:
     virtual ArtworkCache& artwork() = 0;
     virtual LibraryScanner& scanner() = 0;
     virtual AppSettings& settings() = 0;
+    virtual DownloadManager& downloads() = 0;
 
     const Theme& theme() { return themes().current(); }
 

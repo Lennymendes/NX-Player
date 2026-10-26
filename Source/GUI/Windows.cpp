@@ -99,6 +99,7 @@ MainWindow::MainWindow (AppContext& ctx, juce::LookAndFeel& lf)
     if (saved.isNotEmpty()) restoreWindowStateFromString (saved);
     else centreWithSize (1360, 860);
     setVisible (true);
+    main->grabKeyboardFocus();   // space = play / pause straight away
 }
 
 MiniWindow::MiniWindow (AppContext& ctx)

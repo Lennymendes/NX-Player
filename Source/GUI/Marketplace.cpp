@@ -31,13 +31,61 @@ void ToggleSwitch::mouseUp (const juce::MouseEvent& e)
 }
 
 //==============================================================================
+/** Sliders of a DSP plug-in (shown in a call-out from its card; the values are applied when released). */
+class DspParamsPanel : public juce::Component
+{
+public:
+    DspParamsPanel (AppContext& c, const DspPluginInfo& info) : ctx (c), id (info.id)
+    {
+        for (int i = 0; i < (int) info.params.size(); ++i)
+        {
+            const auto& prm = info.params[(size_t) i];
+            auto* label = labels.add (new juce::Label ({}, juce::String::fromUTF8 (prm.name)));
+            label->setColour (juce::Label::textColourId, ctx.theme().textCol());
+            label->setFont (style::font (13.0f));
+            addAndMakeVisible (label);
+            auto* sl = sliders.add (new juce::Slider (juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight));
+            sl->setRange (prm.min_value, prm.max_value, (prm.max_value - prm.min_value) / 200.0);
+            sl->setValue (ctx.plugins().getDspParameter (id, i), juce::dontSendNotification);
+            sl->setTextValueSuffix (juce::String (" ") + juce::String::fromUTF8 (prm.unit));
+            sl->setDoubleClickReturnValue (true, prm.default_value);
+            sl->setColour (juce::Slider::textBoxTextColourId, ctx.theme().textCol());
+            sl->setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+            sl->onDragEnd = [this, sl, i] { ctx.plugins().setDspParameter (id, i, sl->getValue()); };
+            sl->onValueChange = [this, sl, i] { if (! sl->isMouseButtonDown()) ctx.plugins().setDspParameter (id, i, sl->getValue()); };
+            addAndMakeVisible (sl);
+        }
+        setSize (380, 20 + (int) info.params.size() * 56);
+    }
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 10);
+        for (int i = 0; i < sliders.size(); ++i)
+        {
+            labels[i]->setBounds (r.removeFromTop (20));
+            sliders[i]->setBounds (r.removeFromTop (30));
+            r.removeFromTop (6);
+        }
+    }
+private:
+    AppContext& ctx;
+    juce::String id;
+    juce::OwnedArray<juce::Label> labels;
+    juce::OwnedArray<juce::Slider> sliders;
+};
+
+//==============================================================================
 MarketCard::MarketCard (AppContext& c, Data d)
-    : ctx (c), data (std::move (d)), toggle (c), installButton ("Installer"), removeButton (style::Icon::Trash, "Retirer de votre dossier", c)
+    : ctx (c), data (std::move (d)), toggle (c), installButton ("Installer"), removeButton (style::Icon::Trash, "Retirer de votre dossier", c),
+      settingsButton (style::Icon::Settings, "Réglages du plug-in"_t, c)
 {
     toggle.setOn (data.enabled);
     toggle.onToggle = [this] (bool v) { if (onToggle) onToggle (v); };
     installButton.onClick = [this] { if (onInstall) onInstall(); };
     removeButton.onClick = [this] { if (onRemove) onRemove(); };
+    settingsButton.onClick = [this] { if (onSettings) onSettings(); };
+    addChildComponent (settingsButton);
+    settingsButton.setVisible (data.kind == Kind::DspPlugin && data.installed && data.unavailable.isEmpty() && data.paramCount > 0);
     const bool showToggle = data.installed && data.unavailable.isEmpty();
     addChildComponent (toggle);
     addChildComponent (installButton);
@@ -54,6 +102,7 @@ void MarketCard::resized()
     toggle.setBounds (bottom.removeFromRight (48));
     installButton.setBounds (getLocalBounds().reduced (14, 12).removeFromBottom (30).removeFromRight (104));
     if (removeButton.isVisible()) removeButton.setBounds (bottom.removeFromRight (34).withSizeKeepingCentre (30, 30));
+    if (settingsButton.isVisible()) settingsButton.setBounds (bottom.removeFromRight (34).withSizeKeepingCentre (30, 30));
 }
 
 void MarketCard::mouseUp (const juce::MouseEvent& e)
@@ -392,6 +441,15 @@ void MarketplacePage::build()
                                  + (data.kind == MarketCard::Kind::DspPlugin && on ? " (le flux n'est plus bit-perfect)"_t : juce::String()));
             juce::Component::SafePointer<MarketplacePage> safe (this);
             juce::MessageManager::callAsync ([safe] { if (safe) safe->build(); });
+        };
+        card->onSettings = [this, data, card]
+        {
+            for (auto& p : ctx.plugins().getDspPlugins())
+                if (p.id == data.id)
+                {
+                    auto panel = std::make_unique<DspParamsPanel> (ctx, p);
+                    juce::CallOutBox::launchAsynchronously (std::move (panel), card->getScreenBounds(), nullptr);
+                }
         };
         card->onInstall = [this, data]
         {

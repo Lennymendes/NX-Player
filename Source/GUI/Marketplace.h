@@ -50,7 +50,7 @@ public:
     juce::Rectangle<int> previewArea() const { return getLocalBounds().removeFromTop (previewHeight); }
 
     std::function<void (bool)> onToggle;
-    std::function<void()> onInstall, onRemove;
+    std::function<void()> onInstall, onRemove, onSettings;
     static constexpr int previewHeight = 132, cardHeight = 282;
 
 private:
@@ -60,7 +60,7 @@ private:
     Data data;
     ToggleSwitch toggle;
     juce::TextButton installButton;
-    IconButton removeButton;
+    IconButton removeButton, settingsButton;
 };
 
 class MarketplacePage : public ScrollPage, private juce::Timer

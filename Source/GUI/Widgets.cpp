@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "Widgets.h"
+#include "../Library/Downloads.h"
 #include "../Ext/PluginManager.h"
 
 namespace nx
@@ -305,8 +306,16 @@ void AlbumGrid::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-TrackList::TrackList (AppContext& c) : ctx (c) { ctx.artwork().addChangeListener (this); }
-TrackList::~TrackList() { ctx.artwork().removeChangeListener (this); }
+TrackList::TrackList (AppContext& c) : ctx (c) { ctx.artwork().addChangeListener (this); ctx.downloads().addChangeListener (this); }
+TrackList::~TrackList() { ctx.artwork().removeChangeListener (this); ctx.downloads().removeChangeListener (this); }
+
+void TrackList::download (const std::vector<TrackInfo>& list)
+{
+    const int n = ctx.downloads().enqueue (list);
+    ctx.showMessage (n > 0 ? "Téléchargement de "_t + juce::String (n) + " morceau(x) pour l'écoute hors-ligne"_t
+                           : juce::String ("Déjà disponible hors-ligne"_t));
+    repaint();
+}
 
 void TrackList::setTracks (std::vector<TrackInfo> t, bool art, bool alb, bool num)
 {
@@ -334,9 +343,14 @@ void TrackList::mouseUp (const juce::MouseEvent& e)
     if (i < 0 || i >= (int) tracks.size()) return;
     selected = i;
     repaint();
-    if (! e.mods.isPopupMenu()) return;
-
     const auto track = tracks[(size_t) i];
+    if (! e.mods.isPopupMenu())
+    {
+        if (i < (int) downloadButtons.size() && downloadButtons[(size_t) i].contains (e.getPosition()))
+            download ({ track });
+        return;
+    }
+
     juce::PopupMenu m;
     m.addItem ("Lire", [this, i] { ctx.playTracks (tracks, i); });
     m.addItem ("Ajouter à la file d'attente"_t, [this, track] { ctx.enqueue ({ track }); });
@@ -350,6 +364,16 @@ void TrackList::mouseUp (const juce::MouseEvent& e)
             ctx.library().setFavourite (tr.id, tr.favourite);
             repaint();
         });
+    if (DownloadManager::canDownload (track))
+    {
+        m.addSeparator();
+        const bool offline = ctx.downloads().getState (track) == DownloadManager::State::Done;
+        m.addItem ("Télécharger pour l'écoute hors-ligne"_t, ! offline, offline, [this, track] { download ({ track }); });
+        std::vector<TrackInfo> albumTracks;
+        for (auto& t : tracks) if (t.album == track.album && t.source == track.source) albumTracks.push_back (t);
+        if (albumTracks.size() > 1)
+            m.addItem ("Télécharger l'album « "_t + track.album + " »"_t, [this, albumTracks] { download (albumTracks); });
+    }
     if (track.credits.isNotEmpty())
     {
         juce::PopupMenu credits;
@@ -426,12 +450,58 @@ void TrackList::paint (juce::Graphics& g)
                          : tr.isDsd ? style::qualityColour (t, PathQuality::BitPerfect) : t.accent();
             style::paintBadge (g, b, badge, c);
         }
-        if (tr.source != "local")
+        // Offline column: download button / progress ring / "hors-ligne" mark
+        if ((int) downloadButtons.size() != (int) tracks.size()) downloadButtons.assign (tracks.size(), {});
+        downloadButtons[(size_t) i] = {};
+        const auto dlState = ctx.downloads().getState (tr);
+        if (DownloadManager::canDownload (tr) || dlState == DownloadManager::State::Done)
+        {
+            auto cell = r.removeFromRight (34).withSizeKeepingCentre (26, 26);
+            const auto cf = cell.toFloat();
+            switch (dlState)
+            {
+                case DownloadManager::State::Done:
+                {
+                    g.setColour (t.accent().withAlpha (0.18f));
+                    g.fillEllipse (cf);
+                    juce::Path tick;
+                    tick.startNewSubPath (cf.getX() + 7.5f, cf.getCentreY() + 0.5f);
+                    tick.lineTo (cf.getCentreX() - 1.0f, cf.getBottom() - 8.5f);
+                    tick.lineTo (cf.getRight() - 7.0f, cf.getY() + 8.5f);
+                    g.setColour (t.accent());
+                    g.strokePath (tick, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                    break;
+                }
+                case DownloadManager::State::Downloading:
+                case DownloadManager::State::Queued:
+                {
+                    g.setColour (t.textDim().withAlpha (0.3f));
+                    g.drawEllipse (cf.reduced (3.0f), 2.5f);
+                    const float p = juce::jmax (0.04f, ctx.downloads().getProgress (tr));
+                    juce::Path arc;
+                    arc.addCentredArc (cf.getCentreX(), cf.getCentreY(), cf.getWidth() * 0.5f - 3.0f, cf.getHeight() * 0.5f - 3.0f, 0.0f,
+                                       0.0f, p * juce::MathConstants<float>::twoPi, true);
+                    g.setColour (t.accent());
+                    g.strokePath (arc, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                    break;
+                }
+                case DownloadManager::State::Failed:
+                case DownloadManager::State::None:
+                default:
+                    if (i == hover || dlState == DownloadManager::State::Failed)
+                        style::drawIcon (g, style::Icon::Download, cf.reduced (4.0f),
+                                         dlState == DownloadManager::State::Failed ? juce::Colour (0xffff5c6c) : t.textCol().withAlpha (0.85f));
+                    downloadButtons[(size_t) i] = cell;
+                    break;
+            }
+        }
+        if (tr.source != "local" || ctx.library().isOfflineCopy (tr))
         {
             auto s = r.removeFromRight (90);
-            g.setColour (t.textDim().withAlpha (0.8f));
-            g.setFont (style::font (11.5f));
-            const auto src = tr.source.startsWith ("upnp") ? juce::String ("NAS") : tr.source.substring (0, 1).toUpperCase() + tr.source.substring (1);
+            g.setColour ((tr.source == "local" ? t.accent() : t.textDim()).withAlpha (0.85f));
+            g.setFont (style::font (11.5f, tr.source == "local"));
+            const auto src = tr.source == "local" ? juce::String ("Hors-ligne")
+                           : tr.source.startsWith ("upnp") ? juce::String ("NAS") : tr.source.substring (0, 1).toUpperCase() + tr.source.substring (1);
             g.drawText (src, s, juce::Justification::centredRight);
         }
         juce::Rectangle<int> albumCol;

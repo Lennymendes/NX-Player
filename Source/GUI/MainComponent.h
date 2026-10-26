@@ -37,7 +37,7 @@ private:
     double shownAt = 0.0;
 };
 
-class MainComponent : public juce::Component, private juce::Timer
+class MainComponent : public juce::Component, private juce::Timer, private juce::FocusChangeListener
 {
 public:
     explicit MainComponent (AppContext& ctx);
@@ -77,6 +77,7 @@ private:
     void updateNavButtons();
     void showPage (juce::Component* page);
     void timerCallback() override;
+    void globalFocusChanged (juce::Component* focused) override;
     struct Animator : juce::Timer { std::function<void()> tick; void timerCallback() override { tick(); } };
     Animator sidebarAnim;
     float sidebarAmount = 1.0f;     // 0 hidden .. 1 shown (animated)

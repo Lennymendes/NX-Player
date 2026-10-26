@@ -86,9 +86,11 @@ bool Library::createSchema (juce::String& error)
         CREATE TABLE IF NOT EXISTS playlist_items (playlist_id INTEGER REFERENCES playlists(id) ON DELETE CASCADE,
                                                    position INTEGER, track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS offline (local_path TEXT PRIMARY KEY, origin_source TEXT, origin_id TEXT, origin_uri TEXT, added INTEGER);
         INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', '1');
     )SQL";
     if (! db.exec (schema)) { error = db.lastError(); return false; }
+    loadOfflineIndex();
 
     // Full-text search (FTS5) when this SQLite has it; LIKE otherwise.
     hasFts = db.exec (R"SQL(
@@ -373,6 +375,50 @@ std::vector<TrackInfo> Library::getPlaylistTracks (juce::int64 playlistId)
     std::vector<TrackInfo> out;
     while (s.step()) out.push_back (rowToTrack (s));
     return out;
+}
+
+void Library::loadOfflineIndex()
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    const std::lock_guard<std::mutex> o (offlineLock);
+    offlinePaths.clear();
+    offlineOrigins.clear();
+    SqliteStatement s (db, "SELECT local_path, origin_source, origin_id, origin_uri FROM offline");
+    while (s.step())
+    {
+        offlinePaths.insert (s.getText (0));
+        offlineOrigins[s.getText (1) + "|" + s.getText (2)] = s.getText (0);
+        if (s.getText (3).isNotEmpty()) offlineOrigins["uri|" + s.getText (3)] = s.getText (0);
+    }
+}
+
+void Library::markOffline (const juce::String& localPath, const TrackInfo& origin)
+{
+    {
+        std::lock_guard<std::recursive_mutex> l (db.getMutex());
+        SqliteStatement s (db, "INSERT OR REPLACE INTO offline (local_path, origin_source, origin_id, origin_uri, added) VALUES (?1, ?2, ?3, ?4, ?5)");
+        s.bind (1, localPath).bind (2, origin.source).bind (3, origin.externalId).bind (4, origin.uri)
+         .bind (5, (juce::int64) juce::Time::currentTimeMillis()).execute();
+    }
+    const std::lock_guard<std::mutex> o (offlineLock);
+    offlinePaths.insert (localPath);
+    offlineOrigins[origin.source + "|" + origin.externalId] = localPath;
+    if (origin.uri.isNotEmpty()) offlineOrigins["uri|" + origin.uri] = localPath;
+}
+
+bool Library::isOfflineCopy (const TrackInfo& t) const
+{
+    const std::lock_guard<std::mutex> o (offlineLock);
+    return t.source == "local" && offlinePaths.count (t.externalId) > 0;
+}
+
+juce::String Library::getOfflineCopy (const TrackInfo& remote) const
+{
+    const std::lock_guard<std::mutex> o (offlineLock);
+    auto it = offlineOrigins.find (remote.source + "|" + remote.externalId);
+    if (it == offlineOrigins.end() && remote.uri.isNotEmpty()) it = offlineOrigins.find ("uri|" + remote.uri);
+    if (it == offlineOrigins.end() || ! juce::File (it->second).existsAsFile()) return {};
+    return it->second;
 }
 
 void Library::addFolder (const juce::File& folder, const juce::String& kind)

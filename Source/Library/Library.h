@@ -9,6 +9,9 @@
 #include <juce_events/juce_events.h>
 #include <atomic>
 #include <functional>
+#include <map>
+#include <mutex>
+#include <set>
 #include <optional>
 #include <vector>
 
@@ -99,6 +102,13 @@ public:
     void markPlayed (juce::int64 trackId);
     void setFavourite (juce::int64 trackId, bool fav);
 
+    //== Offline copies (tracks downloaded from a NAS / Jellyfin server) ====
+    void markOffline (const juce::String& localPath, const TrackInfo& origin);
+    /** A local track that was downloaded from a server ("hors-ligne" badge). */
+    bool isOfflineCopy (const TrackInfo& localTrack) const;
+    /** Path of the local copy of a remote track, empty if it was not downloaded (or the file is gone). */
+    juce::String getOfflineCopy (const TrackInfo& remoteTrack) const;
+
     /** Stores artwork bytes in the cache (content-addressed) and returns its key. */
     juce::String storeArtwork (const juce::MemoryBlock& image, const juce::String& mime);
     juce::File getArtworkFile (const juce::String& key) const;
@@ -111,6 +121,10 @@ public:
 
 private:
     bool createSchema (juce::String& error);
+    void loadOfflineIndex();
+    mutable std::mutex offlineLock;
+    std::set<juce::String> offlinePaths;
+    std::map<juce::String, juce::String> offlineOrigins;   // "source|id" and "uri|url" -> local path
     static TrackInfo rowToTrack (SqliteStatement& s);
     static const char* trackColumns();
 

@@ -13,6 +13,8 @@
 #include "../Source/Output/CaptureBackend.h"
 #include <future>
 #include "FakeUpnp.h"
+#include "../Source/Library/Downloads.h"
+#include <juce_graphics/juce_graphics.h>
 
 using namespace nxtest;
 
@@ -374,6 +376,12 @@ NX_TEST_SECTION (204, "Paroles synchronisées (LRC)")
     t.check (l.indexAt (5.0) == -1 && l.indexAt (17.0) == 1 && l.indexAt (61.9) == 3 && l.indexAt (70.0) == 4, "ligne courante selon la position");
     const auto plain = nx::parseLrc ("Pas de minutage\nDeuxième ligne"_t);
     t.check (! plain.synced && plain.plain.contains ("Deuxième"_t), "paroles non synchronisées conservées"_t);
+    // Second chance online: the title and artist are cleaned before asking again (LRCLIB, then lyrics.ovh).
+    t.check (nx::cleanTitleForLyrics ("Night Drive (2024 Remaster)") == "Night Drive" && nx::cleanTitleForLyrics ("Échos [feat. Mira]"_t) == "Échos"_t
+             && nx::cleanTitleForLyrics ("Sous la pluie") == "Sous la pluie" && nx::cleanTitleForLyrics ("Song - Live at Wembley") == "Song",
+             "repli des paroles : titre nettoyé (remaster, feat., live)"_t);
+    t.check (nx::mainArtistForLyrics ("Zeyn feat. Mira Solenne") == "Zeyn" && nx::mainArtistForLyrics ("Atlas Trio & Nora Vale") == "Atlas Trio"
+             && nx::mainArtistForLyrics ("Quatuor Émeraude"_t) == "Quatuor Émeraude"_t, "repli des paroles : artiste principal"_t);
 }
 
 NX_TEST_SECTION (205, "Connecteurs : signatures, manifestes, DASH -> FLAC, DIDL-Lite, fusion")
@@ -693,4 +701,64 @@ NX_TEST_SECTION (208, "NAS UPnP / DLNA de bout en bout : découverte, navigation
     const auto& got = capture->capturedInt;
     t.check (got.size() >= pcm.size() && std::equal (pcm.begin(), pcm.end(), got.begin()) && capture->config.sampleRate == 96000.0,
              "lecture depuis le NAS -> DAC 96 kHz : bit-perfect"_t);
+}
+
+//==============================================================================
+NX_TEST_SECTION (209, "Hors-ligne : téléchargement depuis le NAS / Jellyfin vers la bibliothèque locale")
+{
+    auto media = t.tempDir.getChildFile ("nas209");
+    media.createDirectory();
+    const auto pcm = randomPcm (4800, 2, 24, 209);
+    writeWav (media.getChildFile ("t1.wav"), &pcm, nullptr, 2, 96000.0, 24, 24, false);
+    writeWav (media.getChildFile ("t2.wav"), &pcm, nullptr, 2, 96000.0, 24, 24, false);
+    juce::Image cover (juce::Image::RGB, 64, 64, true);
+    { juce::Graphics g (cover); g.fillAll (juce::Colours::orange); }
+    { juce::FileOutputStream out (media.getChildFile ("cover.jpg")); juce::JPEGImageFormat().writeImageToStream (cover, out); }
+
+    FakeUpnpServer nas (media, "Jellyfin");
+    using N = FakeUpnpServer::Node;
+    N album; album.id = "alb"; album.parent = "0"; album.title = "Neon Roads"; album.artist = "Zeyn"; album.container = true; nas.add (album);
+    for (int i = 1; i <= 2; ++i)
+    {
+        N it; it.id = "trk" + juce::String (i); it.parent = "alb"; it.title = i == 1 ? "Night Drive" : "Échos/Écho"_t; it.artist = "Zeyn";
+        it.album = "Neon Roads"; it.file = "t" + juce::String (i) + ".wav"; it.rate = 96000; it.bits = 24; it.art = "cover.jpg";
+        nas.add (it);
+    }
+    nx::UpnpProvider upnp;
+    upnp.addServerFromLocation (nas.location());
+    const auto servers = upnp.getServers();
+    if (servers.empty()) { t.check (false, "serveur de test joignable"); return; }
+    auto remote = upnp.collectTracks (servers[0], "alb");
+    for (int i = 0; i < (int) remote.size(); ++i) remote[(size_t) i].trackNumber = i + 1;
+    t.check (remote.size() == 2 && nx::DownloadManager::canDownload (remote[0]), "morceaux distants téléchargeables : "_t + juce::String ((int) remote.size()));
+
+    nx::Library lib;
+    juce::String err;
+    lib.openInMemory (t.tempDir.getChildFile ("art209"), err);
+    auto folder = t.tempDir.getChildFile ("Telechargements209");
+    nx::DownloadManager dl (lib);
+    dl.setFolder (folder);
+    const int queued = dl.enqueue (remote);
+    const bool idle = dl.waitUntilIdle (20000);
+    t.check (queued == 2 && idle, "2 morceaux mis en file et téléchargés en arrière-plan"_t);
+
+    const auto dest = nx::DownloadManager::destinationFor (folder, remote[0]);
+    juce::MemoryBlock original, copy;
+    media.getChildFile ("t1.wav").loadFileAsData (original);
+    dest.loadFileAsData (copy);
+    t.check (dest.getRelativePathFrom (folder).replaceCharacter ('\\', '/') == "Zeyn/Neon Roads/01 Night Drive.wav" && copy == original,
+             "fichier original copié octet pour octet : "_t + dest.getRelativePathFrom (folder));
+    t.check (nx::DownloadManager::destinationFor (folder, remote[1]).getFileName() == "02 Échos_Écho.wav"_t
+             || nx::DownloadManager::destinationFor (folder, remote[1]).getFileName().startsWith ("02 "), "nom de fichier légal (caractères interdits remplacés)"_t);
+    t.check (dest.getSiblingFile ("cover.jpg").existsAsFile(), "pochette du serveur enregistrée (cover.jpg)");
+
+    const auto local = lib.findTrack ("local", dest.getFullPathName());
+    t.check (local.has_value() && local->title == "Night Drive" && local->artist == "Zeyn" && local->album == "Neon Roads"
+             && local->sampleRate == 96000.0 && local->artworkKey.isNotEmpty(),
+             "ajouté à la bibliothèque locale (métadonnées du serveur, 24/96, pochette)"_t);
+    t.check (local.has_value() && lib.isOfflineCopy (*local) && lib.getOfflineCopy (remote[0]) == dest.getFullPathName()
+             && dl.getState (remote[0]) == nx::DownloadManager::State::Done,
+             "badge « hors-ligne » : la copie locale et l'original distant sont reliés"_t);
+    t.check (dl.enqueue (remote) == 0, "déjà hors-ligne : pas de second téléchargement"_t);
+    t.check (lib.getFolders().contains (folder.getFullPathName()), "dossier de téléchargement surveillé par la bibliothèque"_t);
 }

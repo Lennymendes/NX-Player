@@ -34,6 +34,9 @@ struct UpnpBrowsePage
 class UpnpProvider final : public MediaProvider
 {
 public:
+    UpnpProvider() = default;
+    /** Background threads (discovery, browsing) may still be using the provider: wait for them. */
+    ~UpnpProvider() override { for (int i = 0; i < 600 && busy.load() > 0; ++i) juce::Thread::sleep (10); }
     juce::String getId() const override          { return "upnp"; }
     juce::String getDisplayName() const override { return "NAS (UPnP / DLNA)"; }
     bool isConfigured() const override           { return true; }
@@ -75,6 +78,8 @@ private:
     void collectLocations (juce::DatagramSocket& socket, juce::StringArray& locations, int waitMs);
     std::vector<UpnpServer> servers;
     mutable juce::CriticalSection lock;
+    std::atomic<int> busy { 0 };
+    struct Busy { std::atomic<int>& c; explicit Busy (std::atomic<int>& x) : c (x) { ++c; } ~Busy() { --c; } };
 };
 
 } // namespace nx

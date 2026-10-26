@@ -10,7 +10,11 @@ namespace nx
 class IconButton : public juce::Button
 {
 public:
-    IconButton (style::Icon i, const juce::String& tooltip, AppContext& c) : juce::Button (tooltip), icon (i), ctx (c) { setTooltip (tooltip); }
+    IconButton (style::Icon i, const juce::String& tooltip, AppContext& c) : juce::Button (tooltip), icon (i), ctx (c)
+    {
+        setTooltip (tooltip);
+        setWantsKeyboardFocus (false);   // the space bar stays play / pause instead of re-clicking the button
+    }
     void setIcon (style::Icon i) { icon = i; repaint(); }
     bool active = false;          // accent colour (shuffle on, lyrics shown...)
     bool primary = false;         // big round play button
@@ -135,8 +139,10 @@ public:
     static constexpr int rowHeight = 54;
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
+    void download (const std::vector<TrackInfo>& list);
     AppContext& ctx;
     std::vector<TrackInfo> tracks;
+    std::vector<juce::Rectangle<int>> downloadButtons;   // per row, filled while painting (remote tracks only)
     bool artwork = true, album = true, numbered = false;
     int hover = -1, selected = -1;
 };

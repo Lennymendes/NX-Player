@@ -6,10 +6,11 @@
 namespace nx
 {
 
-class Sidebar : public juce::Component, private juce::Timer
+class Sidebar : public juce::Component, private juce::Timer, private juce::ChangeListener
 {
 public:
     explicit Sidebar (AppContext& c);
+    ~Sidebar() override;
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -24,7 +25,9 @@ public:
 private:
     struct Item { bool header = false; juce::String label; style::Icon icon = style::Icon::Home; PageRequest target; juce::Colour dot; };
     void timerCallback() override;
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { resized(); repaint(); }
     int itemAt (int y) const;
+    int bottomReserve() const;   // settings row (+ downloads progress)
 
     AppContext& ctx;
     juce::TextEditor search;

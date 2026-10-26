@@ -76,7 +76,7 @@ endif()
 juce_add_gui_app(NXPlayer
     PRODUCT_NAME "NX Player"
     COMPANY_NAME "NX Audio Suite"
-    BUNDLE_ID "com.nxaudiosuite.nxplayer"
+    BUNDLE_ID "com.nxaudio.nxplayer"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon_1024.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon_256.png"
     MICROPHONE_PERMISSION_ENABLED FALSE
@@ -85,7 +85,13 @@ juce_add_gui_app(NXPlayer
     NEEDS_WEB_BROWSER FALSE
     PLIST_TO_MERGE [[<plist><dict>
         <key>NSLocalNetworkUsageDescription</key>
-        <string>NX Player recherche et lit les serveurs de musique UPnP / DLNA (NAS) de votre réseau local.</string>
+        <string>NX Player recherche et lit les serveurs de musique UPnP / DLNA (NAS, Jellyfin) de votre réseau local.</string>
+        <key>NSBonjourServices</key>
+        <array>
+            <string>_http._tcp</string>
+            <string>_upnp._tcp</string>
+            <string>_jellyfin._tcp</string>
+        </array>
     </dict></plist>]])
 
 file(GLOB_RECURSE NX_SOURCES CONFIGURE_DEPENDS
@@ -94,9 +100,11 @@ file(GLOB_RECURSE NX_SOURCES CONFIGURE_DEPENDS
 list(FILTER NX_SOURCES EXCLUDE REGEX ".*/win/.*")
 list(FILTER NX_SOURCES EXCLUDE REGEX ".*_mac\\.(cpp|mm)$")
 if(APPLE)
-    list(APPEND NX_SOURCES Source/Output/CoreAudioExclusive_mac.cpp)
+    list(APPEND NX_SOURCES Source/Output/CoreAudioExclusive_mac.cpp Source/Platform/MediaControls_mac.mm)
+    set_source_files_properties(Source/Platform/MediaControls_mac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 endif()
 if(WIN32)
+    list(APPEND NX_SOURCES Source/Platform/win/MediaControls_win.cpp)
     list(APPEND NX_SOURCES Source/Output/win/WasapiExclusiveDevice.cpp Source/Output/win/WasapiExclusiveDevice.h)
     if(NX_ASIO_SDK_DIR)
         list(APPEND NX_SOURCES Source/Output/win/AsioDevice.cpp Source/Output/win/AsioDevice.h
@@ -216,10 +224,10 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(NXPlayer PRIVATE avrt ole32 ksuser)
+    target_link_libraries(NXPlayer PRIVATE avrt ole32 ksuser windowsapp)
 endif()
 if(APPLE)
-    target_link_libraries(NXPlayer PRIVATE "-framework CoreAudio" "-framework AudioToolbox")
+    target_link_libraries(NXPlayer PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework MediaPlayer")
 endif()
 
 # Thèmes et plug-ins livrés avec l'application (Catalog : plug-ins supplémentaires à installer en un clic).
@@ -272,4 +280,14 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Catalog/DSP/tone/tone.c)
     add_custom_command(TARGET NXPlayer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${NX_TONE_DEST}"
         COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:nx_tone> "${NX_TONE_DEST}/")
+endif()
+
+#-------------------------------------------------------------------------------- macOS : signature ad hoc stable
+# Une signature cohérente (identifiant fixe, bundle scellé) permet à macOS de mémoriser l'autorisation
+# « Réseau local » au lieu de la redemander à chaque lancement. Doit rester la dernière étape POST_BUILD
+# (après la copie des thèmes, plug-ins et du catalogue dans le bundle).
+if(APPLE)
+    add_custom_command(TARGET NXPlayer POST_BUILD
+        COMMAND codesign --force --deep --sign - --identifier "com.nxaudio.nxplayer" "$<TARGET_BUNDLE_DIR:NXPlayer>"
+        COMMENT "Signature ad hoc de NX Player.app (com.nxaudio.nxplayer)")
 endif()
