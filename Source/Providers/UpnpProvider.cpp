@@ -60,12 +60,33 @@ double UpnpProvider::parseDuration (const juce::String& s)
     return secs;
 }
 
-juce::String UpnpProvider::parseSsdpLocation (const juce::String& response)
+juce::String UpnpProvider::parseSsdpHeader (const juce::String& response, const juce::String& name)
 {
     for (auto line : juce::StringArray::fromLines (response))
-        if (line.trim().startsWithIgnoreCase ("location:"))
+        if (line.trim().startsWithIgnoreCase (name + ":"))
             return line.fromFirstOccurrenceOf (":", false, false).trim();
     return {};
+}
+
+juce::String UpnpProvider::parseSsdpLocation (const juce::String& response) { return parseSsdpHeader (response, "location"); }
+
+bool UpnpProvider::isMediaServerAnnouncement (const juce::String& response)
+{
+    const auto first = response.upToFirstOccurrenceOf ("\n", false, false);
+    const bool notify = first.startsWithIgnoreCase ("NOTIFY");
+    if (notify && ! parseSsdpHeader (response, "nts").containsIgnoreCase ("ssdp:alive")) return false;
+    if (parseSsdpLocation (response).isEmpty()) return false;
+    // An answer to our own M-SEARCH: keep it whatever the ST it echoes (some servers answer with their device
+    // type or uuid); the device description tells later whether it has a ContentDirectory.
+    if (! notify) return true;
+    const auto target = parseSsdpHeader (response, "nt");
+    return target.containsIgnoreCase ("MediaServer") || target.containsIgnoreCase ("ContentDirectory");
+}
+
+juce::String UpnpProvider::mSearch (const juce::String& st, const juce::String& host)
+{
+    return "M-SEARCH * HTTP/1.1\r\nHOST: " + host + "\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: " + st
+         + "\r\nUSER-AGENT: NXPlayer/" NX_VERSION " UPnP/1.1\r\n\r\n";
 }
 
 bool UpnpProvider::parseDeviceDescription (const juce::String& xmlText, const juce::String& location, UpnpServer& out)
@@ -119,7 +140,11 @@ std::vector<UpnpEntry> UpnpProvider::parseDidl (const juce::String& didl, const 
         if (e->getTagNameWithoutNamespace() == "container")
         {
             entry.isContainer = true;
-            entry.childCount = e->getIntAttribute ("childCount");
+            entry.childCount = e->getIntAttribute ("childCount", -1);
+            entry.track.artist = childText (*e, "artist");
+            if (entry.track.artist.isEmpty()) entry.track.artist = childText (*e, "creator");
+            entry.track.album = entry.title;
+            entry.track.artworkKey = childText (*e, "albumArtURI");
             out.push_back (entry);
             continue;
         }
@@ -183,44 +208,108 @@ std::vector<UpnpServer> UpnpProvider::getServers() const
     return servers;
 }
 
-void UpnpProvider::addServerFromLocation (const juce::String& location)
+juce::StringArray UpnpProvider::getKnownLocations() const
+{
+    const juce::ScopedLock l (lock);
+    juce::StringArray out;
+    for (auto& s : servers) out.add (s.location);
+    return out;
+}
+
+bool UpnpProvider::addServerFromLocation (const juce::String& location)
 {
     auto r = httpRequest ("GET", juce::URL (location), {}, {}, 4000);
     UpnpServer s;
-    if (! r.ok() || ! parseDeviceDescription (r.body, location, s)) return;
+    if (! r.ok()) { lastError = "UPnP : description introuvable ("_t + location + ", HTTP " + juce::String (r.status) + ")"; return false; }
+    if (! parseDeviceDescription (r.body, location, s)) { lastError = "UPnP : "_t + location + " n'est pas un serveur de médias"_t; return false; }
     const juce::ScopedLock l (lock);
     for (auto& existing : servers)
-        if (existing.udn == s.udn) { existing = s; return; }
+        if (existing.udn == s.udn) { existing = s; return true; }
     servers.push_back (s);
+    return true;
+}
+
+void UpnpProvider::collectLocations (juce::DatagramSocket& socket, juce::StringArray& locations, int waitMs)
+{
+    if (socket.waitUntilReady (true, waitMs) != 1) return;
+    char buf[8192];
+    for (int k = 0; k < 64; ++k)   // drain what is queued
+    {
+        const int n = socket.read (buf, sizeof (buf) - 1, false);
+        if (n <= 0) break;
+        const auto text = juce::String::fromUTF8 (buf, n);
+        if (isMediaServerAnnouncement (text)) locations.addIfNotAlreadyThere (parseSsdpLocation (text));
+        if (socket.waitUntilReady (true, 0) != 1) break;
+    }
 }
 
 std::vector<UpnpServer> UpnpProvider::discover (int timeoutMs)
 {
+    // 1) Passive: servers announce themselves (ssdp:alive) on 239.255.255.250:1900.
+    juce::DatagramSocket listener (false);
+    listener.setEnablePortReuse (true);
+    const bool listening = listener.bindToPort (1900) && listener.joinMulticast ("239.255.255.250");
+
+    // 2) Active: M-SEARCH from an ephemeral port; answers come back unicast.
     juce::DatagramSocket socket (true);
     socket.bindToPort (0);
-    const juce::String msg = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\n"
-                             "ST: urn:schemas-upnp-org:service:ContentDirectory:1\r\n\r\n";
-    for (int i = 0; i < 2; ++i)
-        socket.write ("239.255.255.250", 1900, msg.toRawUTF8(), (int) msg.getNumBytesAsUTF8());
+    const juce::StringArray targets { "urn:schemas-upnp-org:device:MediaServer:1", "urn:schemas-upnp-org:service:ContentDirectory:1" };
 
     juce::StringArray locations;
-    const auto end = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutMs;
-    char buf[4096];
-    while (juce::Time::getMillisecondCounter() < end)
+    const auto t0 = juce::Time::getMillisecondCounter();
+    const int sendAt[] = { 0, 400, 1200 };   // UDP is lossy: repeat
+    int sent = 0;
+    while ((int) (juce::Time::getMillisecondCounter() - t0) < timeoutMs)
     {
-        if (socket.waitUntilReady (true, 200) != 1) continue;
-        const int n = socket.read (buf, sizeof (buf) - 1, false);
-        if (n <= 0) continue;
-        buf[n] = 0;
-        const auto loc = parseSsdpLocation (juce::String::fromUTF8 (buf, n));
-        if (loc.isNotEmpty()) locations.addIfNotAlreadyThere (loc);
+        if (sent < 3 && (int) (juce::Time::getMillisecondCounter() - t0) >= sendAt[sent])
+        {
+            for (auto& st : targets)
+            {
+                const auto msg = mSearch (st);
+                socket.write ("239.255.255.250", 1900, msg.toRawUTF8(), (int) msg.getNumBytesAsUTF8());
+            }
+            ++sent;
+        }
+        collectLocations (socket, locations, 40);
+        if (listening) collectLocations (listener, locations, 10);
     }
+    if (listening) listener.leaveMulticast ("239.255.255.250");
+
+    if (locations.isEmpty() && getServers().empty())
+        lastError = "Aucune réponse SSDP : vérifiez que le NAS est sur le même réseau, ou ajoutez son adresse IP."_t;
     for (auto& loc : locations) addServerFromLocation (loc);
     return getServers();
 }
 
-std::vector<UpnpEntry> UpnpProvider::soapCall (const UpnpServer& server, const juce::String& action, const juce::String& args)
+std::vector<UpnpServer> UpnpProvider::discoverHost (const juce::String& host, int port, int timeoutMs)
 {
+    juce::DatagramSocket socket (false);
+    socket.bindToPort (0);
+    juce::StringArray locations;
+    const auto t0 = juce::Time::getMillisecondCounter();
+    int sent = 0;
+    while ((int) (juce::Time::getMillisecondCounter() - t0) < timeoutMs)
+    {
+        if (sent < 3 && (int) (juce::Time::getMillisecondCounter() - t0) >= sent * 500)
+        {
+            for (auto st : { "urn:schemas-upnp-org:device:MediaServer:1", "urn:schemas-upnp-org:service:ContentDirectory:1" })
+            {
+                const auto msg = mSearch (st, host + ":" + juce::String (port));
+                socket.write (host, port, msg.toRawUTF8(), (int) msg.getNumBytesAsUTF8());
+            }
+            ++sent;
+        }
+        collectLocations (socket, locations, 50);
+        if (! locations.isEmpty() && sent >= 2) break;
+    }
+    if (locations.isEmpty()) lastError = "UPnP : aucune réponse de "_t + host;
+    for (auto& loc : locations) addServerFromLocation (loc);
+    return getServers();
+}
+
+UpnpBrowsePage UpnpProvider::soapCall (const UpnpServer& server, const juce::String& action, const juce::String& args)
+{
+    UpnpBrowsePage page;
     const juce::String body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
         "<s:Body><u:" + action + " xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\">" + args
@@ -228,29 +317,80 @@ std::vector<UpnpEntry> UpnpProvider::soapCall (const UpnpServer& server, const j
     juce::StringPairArray h;
     h.set ("Content-Type", "text/xml; charset=\"utf-8\"");
     h.set ("SOAPACTION", "\"urn:schemas-upnp-org:service:ContentDirectory:1#" + action + "\"");
-    auto r = httpRequest ("POST", juce::URL (server.controlUrl), h, body, 10000);
-    if (! r.ok()) { lastError = "UPnP " + action + " : HTTP " + juce::String (r.status); return {}; }
+    auto r = httpRequest ("POST", juce::URL (server.controlUrl), h, body, 15000);
     auto xml = juce::XmlDocument::parse (r.body);
-    if (xml == nullptr) return {};
-    juce::String result;
-    std::function<void (const juce::XmlElement&)> find = [&] (const juce::XmlElement& e)
+
+    std::function<juce::String (const juce::XmlElement&, const juce::String&)> find = [&] (const juce::XmlElement& e, const juce::String& tag) -> juce::String
     {
         for (auto* c : e.getChildIterator())
         {
-            if (c->getTagNameWithoutNamespace() == "Result") { result = c->getAllSubText(); return; }
-            find (*c);
+            if (c->getTagNameWithoutNamespace() == tag) return c->getAllSubText();
+            const auto sub = find (*c, tag);
+            if (sub.isNotEmpty()) return sub;
         }
+        return {};
     };
-    find (*xml);
-    return parseDidl (result, server.udn);
+
+    if (! r.ok())
+    {
+        const auto desc = xml != nullptr ? find (*xml, "errorDescription").trim() : juce::String();
+        page.error = "UPnP " + action + " : " + (desc.isNotEmpty() ? desc : (r.status == 0 ? juce::String ("serveur injoignable"_t) : "HTTP " + juce::String (r.status)));
+        lastError = page.error;
+        return page;
+    }
+    if (xml == nullptr) { page.error = lastError = "UPnP " + action + " : réponse illisible"_t; return page; }
+    page.ok = true;
+    page.entries = parseDidl (find (*xml, "Result"), server.udn);
+    const auto nr = find (*xml, "NumberReturned").trim();
+    const auto tm = find (*xml, "TotalMatches").trim();
+    page.numberReturned = nr.isNotEmpty() ? nr.getIntValue() : (int) page.entries.size();
+    page.totalMatches = tm.isNotEmpty() ? tm.getIntValue() : -1;
+    return page;
 }
 
-std::vector<UpnpEntry> UpnpProvider::browse (const UpnpServer& server, const juce::String& objectId, int start, int count)
+UpnpBrowsePage UpnpProvider::browsePage (const UpnpServer& server, const juce::String& objectId, int start, int count)
 {
     return soapCall (server, "Browse",
-                     "<ObjectID>" + juce::String (objectId).replace ("&", "&amp;").replace ("<", "&lt;") + "</ObjectID>"
+                     "<ObjectID>" + objectId.replace ("&", "&amp;").replace ("<", "&lt;").replace (">", "&gt;") + "</ObjectID>"
                      "<BrowseFlag>BrowseDirectChildren</BrowseFlag><Filter>*</Filter><StartingIndex>" + juce::String (start)
                      + "</StartingIndex><RequestedCount>" + juce::String (count) + "</RequestedCount><SortCriteria></SortCriteria>");
+}
+
+std::vector<UpnpEntry> UpnpProvider::browseAll (const UpnpServer& server, const juce::String& objectId, int maxEntries)
+{
+    std::vector<UpnpEntry> out;
+    constexpr int pageSize = 200;
+    for (int start = 0; (int) out.size() < maxEntries;)
+    {
+        auto page = browsePage (server, objectId, start, pageSize);
+        if (! page.ok) break;
+        out.insert (out.end(), page.entries.begin(), page.entries.end());
+        if (page.numberReturned <= 0) break;
+        start += page.numberReturned;
+        if (page.totalMatches > 0 ? start >= page.totalMatches : page.numberReturned < pageSize) break;
+    }
+    return out;
+}
+
+std::vector<TrackInfo> UpnpProvider::collectTracks (const UpnpServer& server, const juce::String& objectId, int maxTracks)
+{
+    std::vector<TrackInfo> out;
+    std::vector<juce::String> stack { objectId };
+    juce::StringArray seen;
+    while (! stack.empty() && (int) out.size() < maxTracks)
+    {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (seen.contains (id)) continue;   // some servers expose the same container twice
+        seen.add (id);
+        auto entries = browseAll (server, id, maxTracks);
+        // keep the server's order: containers are visited depth-first in order
+        for (auto it = entries.rbegin(); it != entries.rend(); ++it)
+            if (it->isContainer) stack.push_back (it->id);
+        for (auto& e : entries)
+            if (! e.isContainer && (int) out.size() < maxTracks) out.push_back (e.track);
+    }
+    return out;
 }
 
 std::vector<TrackInfo> UpnpProvider::searchTracks (const juce::String& query, int limit)
@@ -259,36 +399,21 @@ std::vector<TrackInfo> UpnpProvider::searchTracks (const juce::String& query, in
     const auto q = query.replace ("\"", "").replace ("&", "&amp;").replace ("<", "&lt;");
     for (auto& s : getServers())
     {
-        auto entries = soapCall (s, "Search",
+        auto page = soapCall (s, "Search",
             "<ContainerID>0</ContainerID><SearchCriteria>upnp:class derivedfrom \"object.item.audioItem\" and (dc:title contains \""
             + q + "\" or upnp:artist contains \"" + q + "\" or upnp:album contains \"" + q + "\")</SearchCriteria>"
             "<Filter>*</Filter><StartingIndex>0</StartingIndex><RequestedCount>" + juce::String (limit) + "</RequestedCount><SortCriteria></SortCriteria>");
-        for (auto& e : entries) if (! e.isContainer) out.push_back (e.track);
+        for (auto& e : page.entries) if (! e.isContainer) out.push_back (e.track);
     }
     return out;
 }
 
 int UpnpProvider::importContainer (Library& library, const UpnpServer& server, const juce::String& objectId, int maxTracks)
 {
-    int imported = 0;
-    std::vector<juce::String> stack { objectId };
-    while (! stack.empty() && imported < maxTracks)
-    {
-        const auto id = stack.back();
-        stack.pop_back();
-        for (int start = 0;; start += 500)
-        {
-            auto entries = browse (server, id, start, 500);
-            for (auto& e : entries)
-            {
-                if (e.isContainer) stack.push_back (e.id);
-                else { library.upsert (e.track); ++imported; }
-            }
-            if (entries.size() < 500) break;
-        }
-    }
-    if (imported > 0) library.notifyChanged();
-    return imported;
+    auto tracks = collectTracks (server, objectId, maxTracks);
+    for (auto& t : tracks) library.upsert (t);
+    if (! tracks.empty()) library.notifyChanged();
+    return (int) tracks.size();
 }
 
 } // namespace nx

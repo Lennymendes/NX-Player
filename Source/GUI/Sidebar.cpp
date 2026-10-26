@@ -49,6 +49,9 @@ void Sidebar::refresh()
         const auto icon = p->getId() == "upnp" ? style::Icon::Network : style::Icon::Cloud;
         item (p->getDisplayName(), icon, { PageId::Source, p->getId() }, p->isSignedIn() ? ok : off);
     }
+    header ("Personnaliser");
+    item ("Extensions & Thèmes"_t, style::Icon::Grid, { PageId::Marketplace });
+    item ("Plugins utilisateur", style::Icon::Plugin, { PageId::UserPlugins });
     const auto playlists = ctx.library().getPlaylists();
     if (! playlists.empty())
     {
@@ -91,6 +94,15 @@ void Sidebar::mouseMove (const juce::MouseEvent& e)
 {
     const int i = itemAt (e.y);
     if (i != hover) { hover = i; repaint(); }
+}
+
+void Sidebar::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
+{
+    int total = 0;
+    for (auto& it : items) total += it.header ? headerHeight : itemHeight;
+    const int visible = getHeight() - 50 - (pluginSlot.isVisible() ? pluginSlot.getHeight() : 0) - listTop;
+    scroll = juce::jlimit (0, juce::jmax (0, total - visible), scroll - juce::roundToInt (w.deltaY * 240.0f));
+    repaint();
 }
 
 void Sidebar::mouseUp (const juce::MouseEvent& e)
@@ -142,7 +154,9 @@ void Sidebar::paint (juce::Graphics& g)
             continue;
         }
         auto row = juce::Rectangle<int> (10, y, getWidth() - 20, itemHeight);
-        const bool isActive = it.target.page == active.page && (it.target.a == active.a || it.target.a.isEmpty() && active.a.isEmpty());
+        const bool pageOnly = it.target.page == PageId::Marketplace || it.target.page == PageId::UserPlugins || it.target.page == PageId::Source;
+        const bool isActive = it.target.page == active.page && (pageOnly ? it.target.a == active.a || it.target.page != PageId::Source
+                                                                         : it.target.a == active.a || (it.target.a.isEmpty() && active.a.isEmpty()));
         if (isActive)
         {
             g.setColour (t.accent().withAlpha (0.16f));

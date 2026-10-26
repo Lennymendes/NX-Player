@@ -19,7 +19,7 @@ void IconButton::paintButton (juce::Graphics& g, bool hi, bool down)
         style::drawIcon (g, icon, c.reduced (d * 0.28f).translated (icon == style::Icon::Play ? d * 0.03f : 0.0f, 0.0f), t.bg());
         return;
     }
-    if (hi || down)
+    if ((hi || down) && isEnabled())
     {
         const float d = juce::jmin (r.getWidth(), r.getHeight());
         g.setColour (juce::Colours::white.withAlpha (down ? 0.14f : 0.08f));
@@ -27,7 +27,7 @@ void IconButton::paintButton (juce::Graphics& g, bool hi, bool down)
     }
     const float s = juce::jmin (r.getWidth(), r.getHeight()) * 0.62f;
     style::drawIcon (g, icon, r.withSizeKeepingCentre (s, s),
-                     active ? t.accent() : (hi ? t.textCol() : t.textCol().withAlpha (0.82f)));
+                     ! isEnabled() ? t.textCol().withAlpha (0.28f) : active ? t.accent() : (hi ? t.textCol() : t.textCol().withAlpha (0.82f)));
     if (active)
     {
         g.setColour (t.accent());

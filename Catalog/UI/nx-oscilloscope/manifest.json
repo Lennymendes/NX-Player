@@ -1,0 +1,12 @@
+{
+  "id": "nx.oscilloscope",
+  "name": "Oscilloscope",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Forme d'onde en direct, déclenchée sur le passage à zéro pour une image stable, avec traînée phosphore.",
+  "main": "plugin.js",
+  "slots": ["nowplaying.side", "home.top", "playerbar.right"],
+  "fps": 60,
+  "preferredHeight": 140,
+  "enabledByDefault": false
+}

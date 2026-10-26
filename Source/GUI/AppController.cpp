@@ -44,10 +44,13 @@ AppController::AppController (Options options)
     credentials = std::make_unique<CredentialStore> (dataDir.getChildFile ("accounts.json"));
     unified = std::make_unique<UnifiedMediaProvider> (lib, *credentials);
     unified->addProvider (std::make_unique<UpnpProvider>());
+   #if NX_ENABLE_STREAMING
+    // Streaming services: off for now (cmake -DNX_ENABLE_STREAMING=ON brings them back).
     unified->addProvider (std::make_unique<QobuzProvider> (*credentials));
     unified->addProvider (std::make_unique<TidalProvider> (*credentials));
     unified->addProvider (std::make_unique<SpotifyProvider> (*credentials));
     unified->addProvider (std::make_unique<YouTubeMusicProvider> (*credentials));
+   #endif
 
     // Output: the saved backend, else the best one of the platform, else a silent virtual DAC.
     std::unique_ptr<OutputBackend> backend = std::move (options.backend);
@@ -132,6 +135,27 @@ AppController::AppController (Options options)
     {
         mainWindow = std::make_unique<MainWindow> (*this, lookAndFeel);
         libScanner->start (3000);
+
+        // NAS: reconnect the servers known from last time, then look for new ones (background).
+        if (auto* upnp = dynamic_cast<UpnpProvider*> (unified->getProvider ("upnp")))
+        {
+            juce::StringArray known;
+            if (auto* arr = appSettings.get ("nasServers").getArray()) for (auto& v : *arr) known.add (v.toString());
+            std::weak_ptr<int> weak = alive;
+            nasDiscoveryRunning = true;
+            juce::Thread::launch ([this, upnp, known, weak]
+            {
+                for (auto& loc : known) upnp->addServerFromLocation (loc);
+                upnp->discover (3000);
+                nasDiscoveryRunning = false;
+                juce::MessageManager::callAsync ([this, weak]
+                {
+                    if (weak.expired()) return;
+                    saveNasServers();
+                    if (auto* m = getMainComponent()) m->sidebar.refresh();
+                });
+            });
+        }
     }
     else
     {
@@ -146,6 +170,7 @@ AppController::AppController (Options options)
 AppController::~AppController()
 {
     stopTimer();
+    for (int i = 0; i < 400 && nasDiscoveryRunning.load(); ++i) juce::Thread::sleep (10);   // the NAS thread uses the providers
     if (mainWindow) appSettings.set ("windowBounds", mainWindow->getWindowStateAsString());
     eng->stop();
     miniWindow.reset();
@@ -153,6 +178,9 @@ AppController::~AppController()
     headlessMain.reset();
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     libScanner.reset();
+    // The engine's DSP chains call into plug-in libraries: release them before the plug-in manager unloads those.
+    audioAnalyzer.reset();
+    eng.reset();
 }
 
 MainComponent* AppController::getMainComponent()
@@ -228,6 +256,16 @@ void AppController::selectDevice (const juce::String& name)
     eng->setDevice (name);
     appSettings.set ("device", name);
     showMessage ("Périphérique : "_t + name);
+}
+
+void AppController::saveNasServers()
+{
+    if (auto* upnp = dynamic_cast<UpnpProvider*> (unified->getProvider ("upnp")))
+    {
+        juce::Array<juce::var> list;
+        for (auto& loc : upnp->getKnownLocations()) list.add (loc);
+        if (! list.isEmpty()) appSettings.set ("nasServers", list);
+    }
 }
 
 void AppController::applyTheme (const juce::String& id)

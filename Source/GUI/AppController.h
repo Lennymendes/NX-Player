@@ -64,6 +64,9 @@ public:
     void selectDevice (const juce::String& name) override;
     void applyTheme (const juce::String& id) override;
     void showMessage (const juce::String& text) override;
+    juce::File userDataDirectory() override  { return dataDir; }
+    juce::File resourcesDirectory() override { return resourcesDir; }
+    void saveNasServers() override;
     const juce::Image& backdrop() override;
     juce::Component* backdropOwner() override;
 
@@ -105,6 +108,7 @@ private:
     int lyricsGeneration = 0;
     juce::Image emptyImage;
     std::shared_ptr<int> alive = std::make_shared<int> (0);
+    std::atomic<bool> nasDiscoveryRunning { false };
 };
 
 } // namespace nx

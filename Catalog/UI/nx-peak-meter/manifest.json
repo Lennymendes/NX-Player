@@ -1,0 +1,12 @@
+{
+  "id": "nx.peak-meter",
+  "name": "Crêtes-mètre numérique",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Barres de niveau L / R en dBFS (crête et RMS), maintien de crête 1,5 s et témoin d'écrêtage. Compact dans la barre de lecture.",
+  "main": "plugin.js",
+  "slots": ["playerbar.right", "nowplaying.side", "sidebar.bottom"],
+  "fps": 60,
+  "preferredHeight": 64,
+  "enabledByDefault": false
+}

@@ -239,6 +239,9 @@ void PluginManager::rescan()
                         for (int i = 0; i < d->num_params; ++i) p.params.push_back (d->params[i]);
                         if (! dspValues.count (p.id))
                             for (auto& prm : p.params) dspValues[p.id].push_back (prm.default_value);
+                        // Never unload a library a running DSP chain may still use: keep the old handle alive.
+                        if (auto old = libraries.find (p.id); old != libraries.end() && old->second != nullptr)
+                            retiredLibraries.push_back (std::move (old->second));
                         libraries[p.id] = std::move (lib);
                     }
                 }
@@ -325,8 +328,11 @@ bool PluginManager::loadScript (UiRuntime& rt)
         juce::Logger::writeToLog ("[" + id + "] " + s);
         return juce::var();
     });
-    state->setProperty ("ui", juce::var (ui));
-    state->setProperty ("console", juce::var (logger));
+    if (ownsSharedObjects || ! state->hasProperty ("ui"))
+    {
+        state->setProperty ("ui", juce::var (ui));
+        state->setProperty ("console", juce::var (logger));
+    }
     rt.engine->registerNativeObject ("nx", state.get());
 
     const auto res = rt.engine->execute (rt.script.loadFileAsString());
@@ -336,17 +342,24 @@ bool PluginManager::loadScript (UiRuntime& rt)
     return true;
 }
 
-bool PluginManager::render (const juce::String& id, const juce::String& slot, juce::Graphics& g, juce::Rectangle<float> area)
+juce::File PluginManager::getPluginFolder (const juce::String& id) const
+{
+    for (auto& p : uiPlugins) if (p.id == id) return p.folder;
+    for (auto& p : dspPlugins) if (p.id == id) return p.folder;
+    return {};
+}
+
+bool PluginManager::render (const juce::String& id, const juce::String& slot, juce::Graphics& g, juce::Rectangle<float> area, bool preview)
 {
     const UiPluginInfo* info = nullptr;
     for (auto& p : uiPlugins) if (p.id == id) info = &p;
-    if (info == nullptr || ! info->enabled) return false;
+    if (info == nullptr || (! info->enabled && ! preview)) return false;
 
-    auto& rt = runtimes[id];
+    auto& rt = runtimes[preview ? "preview|" + id : id];
     if (rt == nullptr)
     {
         rt = std::make_unique<UiRuntime>();
-        rt->id = id;
+        rt->id = id;   // the preview instance reports the same id
         rt->script = info->script;
         loadScript (*rt);
     }
@@ -411,6 +424,7 @@ void PluginManager::timerCallback()
             p.preferredHeight = juce::jlimit (24, 600, (int) m.getProperty ("preferredHeight", p.preferredHeight));
         }
         runtimes.erase (p.id);
+        runtimes.erase ("preview|" + p.id);
         if (onPluginsChanged) onPluginsChanged();
     }
 }

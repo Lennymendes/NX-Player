@@ -89,7 +89,8 @@ inline juce::String formatTime (double seconds)
 //==============================================================================
 /** Vector icons (24 × 24 design grid, scaled into r). */
 enum class Icon { Play, Pause, Next, Previous, Shuffle, Repeat, Volume, VolumeMute, Lyrics, Queue, Mini, Home, Search, Clock,
-                  Album, Artist, Song, Playlist, Folder, Network, Cloud, Settings, Heart, Plus, Close, Expand, Signal, Theme, Plugin };
+                  Album, Artist, Song, Playlist, Folder, Network, Cloud, Settings, Heart, Plus, Close, Expand, Signal, Theme, Plugin,
+                  ChevronLeft, ChevronRight, SidebarToggle, Grid, Download, Trash };
 
 inline juce::Path iconPath (Icon icon)
 {
@@ -144,6 +145,16 @@ inline juce::Path iconPath (Icon icon)
         case Icon::Signal:   for (int i = 0; i < 4; ++i) p.addRoundedRectangle (3.0f + i * 5.0f, 17.0f - i * 4.0f, 3.2f, 4.0f + i * 4.0f, 1.0f); break;
         case Icon::Theme:    p.addEllipse (3.5f, 3.5f, 17, 17); p.addEllipse (7, 8, 3, 3); p.addEllipse (12, 6.5f, 3, 3); p.addEllipse (15, 11, 3, 3); break;
         case Icon::Plugin:   p.addRoundedRectangle (4, 7, 16, 13, 2.5f); p.addRectangle (8, 3, 2.5f, 4); p.addRectangle (13.5f, 3, 2.5f, 4); break;
+        case Icon::ChevronLeft:  p.startNewSubPath (15, 5); p.lineTo (8, 12); p.lineTo (15, 19); break;
+        case Icon::ChevronRight: p.startNewSubPath (9, 5); p.lineTo (16, 12); p.lineTo (9, 19); break;
+        case Icon::SidebarToggle: p.addRoundedRectangle (3, 4.5f, 18, 15, 3); p.startNewSubPath (9.5f, 4.5f); p.lineTo (9.5f, 19.5f);
+                                  p.startNewSubPath (5.2f, 8.5f); p.lineTo (7.4f, 8.5f); p.startNewSubPath (5.2f, 11.5f); p.lineTo (7.4f, 11.5f); break;
+        case Icon::Grid:     p.addRoundedRectangle (3.5f, 3.5f, 7.5f, 7.5f, 2); p.addRoundedRectangle (13, 3.5f, 7.5f, 7.5f, 2);
+                             p.addRoundedRectangle (3.5f, 13, 7.5f, 7.5f, 2); p.addRoundedRectangle (13, 13, 7.5f, 7.5f, 2); break;
+        case Icon::Download: p.startNewSubPath (12, 4); p.lineTo (12, 15); p.startNewSubPath (7.5f, 10.5f); p.lineTo (12, 15); p.lineTo (16.5f, 10.5f);
+                             p.startNewSubPath (5, 19.5f); p.lineTo (19, 19.5f); break;
+        case Icon::Trash:    p.startNewSubPath (4, 6.5f); p.lineTo (20, 6.5f); p.startNewSubPath (9.5f, 6.5f); p.lineTo (10, 4); p.lineTo (14, 4); p.lineTo (14.5f, 6.5f);
+                             p.startNewSubPath (6, 6.5f); p.lineTo (7, 20); p.lineTo (17, 20); p.lineTo (18, 6.5f); break;
     }
     return p;
 }

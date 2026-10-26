@@ -2,6 +2,7 @@
 // Brique 3 & 4: themes (CSS, hot reload, import / export), JS UI plug-ins, C DSP plug-ins, and the
 // whole interface rendered off-screen (screenshots of every page).
 #include "TestFramework.h"
+#include "FakeUpnp.h"
 #include <set>
 #include "TestAudioFiles.h"
 #include "../Source/Ext/ThemeEngine.h"
@@ -80,7 +81,8 @@ NX_TEST_SECTION (401, "Thèmes .nxtheme : CSS, rechargement à chaud, import / e
     auto userDir = t.tempDir.getChildFile ("themes401");
     userDir.createDirectory();
     tm.setSearchFolders ({ resources().getChildFile ("Themes"), userDir });
-    t.check (tm.getThemeIds().contains ("nx-emerald") && tm.getThemeIds().contains ("aura-neon"), "2 thèmes livrés : "_t + tm.getThemeIds().joinIntoString (", "));
+    t.check (tm.getThemeIds().contains ("nx-emerald") && tm.getThemeIds().contains ("aura-neon") && tm.getThemeIds().contains ("glass-rose")
+             && tm.getThemeIds().contains ("ocean-blue"), "4 thèmes livrés : "_t + tm.getThemeIds().joinIntoString (", "));
     t.check (tm.apply ("nx-emerald") && tm.current().accent() == juce::Colour (0xff00f5a0) && tm.current().bg() == juce::Colour (0xff0a0c0e),
              "NX Emerald : fond #0A0C0E, accent #00F5A0");
     t.check (tm.findTheme ("aura-neon") != nullptr && tm.findTheme ("aura-neon")->shaderCode.contains ("gl_FragColor"),
@@ -340,13 +342,107 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
 
     app.navigate ({ nx::PageId::Search, "lum" });
     t.check (shoot ("06_recherche") > 40, "Recherche unifiée"_t);
-    app.navigate ({ nx::PageId::Source, "qobuz" });
-    t.check (shoot ("07_source_qobuz") > 30, "Source Qobuz (identifiants partenaire)");
+    // Streaming sources are off: the sidebar keeps local files and the NAS only.
+    t.check (app.providers().getProvider ("qobuz") == nullptr && app.providers().getProvider ("spotify") == nullptr
+             && app.providers().getProvider ("upnp") != nullptr, "sources : fichiers locaux et NAS uniquement (streaming retiré)"_t);
+
+    // NAS: a fake UPnP server on 127.0.0.1 that serves the Neon Roads files.
+    auto nasMedia = music.getChildFile ("Neon Roads");
+    FakeUpnpServer nas (nasMedia, "Synology DS920+");
+    {
+        using N = FakeUpnpServer::Node;
+        N music0; music0.id = "music"; music0.parent = "0"; music0.title = "Musique"; music0.container = true; nas.add (music0);
+        const char* names[] = { "Neon Roads", "Glass Hours", "Fragments", "Blue Hour Sessions" };
+        for (int i = 0; i < 4; ++i)
+        {
+            N a; a.id = "a" + juce::String (i); a.parent = "music"; a.title = names[i]; a.container = true; a.art = "cover.jpg";
+            a.artist = i == 0 ? "Zeyn" : "Artiste " + juce::String (i);
+            nas.add (a);
+        }
+        int k = 0;
+        for (const auto& e : juce::RangedDirectoryIterator (nasMedia, false, "*.wav"))
+        {
+            N it; it.id = "n" + juce::String (++k); it.parent = "a0"; it.title = e.getFile().getFileNameWithoutExtension().fromFirstOccurrenceOf (" ", false, false);
+            it.artist = "Zeyn"; it.album = "Neon Roads"; it.file = e.getFile().getFileName(); it.rate = 96000; it.bits = 24; it.art = "cover.jpg";
+            nas.add (it);
+        }
+    }
+    auto* upnp = dynamic_cast<nx::UpnpProvider*> (app.providers().getProvider ("upnp"));
+    if (upnp != nullptr) upnp->discoverHost ("127.0.0.1", nas.udpPort, 3000);
+    const auto nasServers = upnp != nullptr ? upnp->getServers() : std::vector<nx::UpnpServer>();
+    t.check (nasServers.size() == 1, "NAS trouvé par l'interface : "_t + (nasServers.empty() ? juce::String ("aucun") : nasServers[0].name));
+    app.navigate ({ nx::PageId::Source, "upnp" });
+    t.check (shoot ("07_nas_serveurs") > 30, "NAS : serveurs du réseau"_t);
+    if (! nasServers.empty())
+    {
+        app.navigate ({ nx::PageId::Source, "upnp", nx::SourcePage::upnpArg (nasServers[0].udn, "music", { nasServers[0].name, "Musique" }) });
+        settle (600);
+        t.check (shoot ("08_nas_dossier") > 40, "NAS : dossier d'albums (grille avec pochettes)"_t);
+        app.navigate ({ nx::PageId::Source, "upnp", nx::SourcePage::upnpArg (nasServers[0].udn, "a0", { nasServers[0].name, "Musique", "Neon Roads" }) });
+        settle (600);
+        shoot ("08b_nas_album");
+    }
+
     app.navigate ({ nx::PageId::Settings });
-    t.check (shoot ("08_reglages") > 30, "Réglages (sortie, DSD, thèmes, plug-ins)"_t);
+    t.check (shoot ("09_reglages") > 30, "Réglages (sortie, DSD, thèmes, plug-ins)"_t);
     app.plugins().setUiPluginEnabled ("nx.analog-vu", true);
     app.navigate ({ nx::PageId::NowPlaying });
-    t.check (shoot ("09_vu_metres") > 60, "plug-in VU-mètres dans « En cours »"_t);
+    t.check (shoot ("10_vu_metres") > 60, "plug-in VU-mètres dans « En cours »"_t);
+
+    // Extensions & Thèmes gallery, then the user plug-ins catalogue
+    auto& market = main->getMarketplace();
+    app.navigate ({ nx::PageId::Marketplace });
+    const int galleryCards = market.getNumCards();
+    t.check (galleryCards >= 7, "Extensions & Thèmes : "_t + juce::String (galleryCards) + " cartes (4 thèmes, plug-ins d'interface et DSP)"_t);
+    t.check (shoot ("12_extensions_themes") > 60, "galerie avec aperçus en direct"_t);
+    app.navigate ({ nx::PageId::Marketplace, "themes" });
+    const int themeCards = market.getNumCards();
+    t.check (themeCards == 4, "onglet Thèmes : "_t + juce::String (themeCards) + " cartes");
+    app.navigate ({ nx::PageId::UserPlugins, "catalogue" });
+    const int catalogueCards = market.getNumCards();
+    t.check (catalogueCards == 6, "Plugins utilisateur › Catalogue : "_t + juce::String (catalogueCards) + " plug-ins en plus (5 interface, 1 DSP)");
+    t.check (shoot ("13_plugins_catalogue") > 60, "catalogue avec aperçus"_t);
+
+    juce::String installError;
+    const bool radialOk = market.installFromCatalogue ("nx.radial", installError);
+    bool radialOn = false;
+    for (auto& p : app.plugins().getUiPlugins()) if (p.id == "nx.radial") radialOn = p.enabled && p.folder.isAChildOf (app.userDataDirectory());
+    t.check (radialOk && radialOn, "installation en un clic : Spectre circulaire copié dans le dossier utilisateur et activé"_t
+                                   + (installError.isNotEmpty() ? " (" + installError + ")" : juce::String()));
+    const bool toneOk = market.installFromCatalogue ("nx.tone", installError);
+    bool toneOn = false;
+    for (auto& p : app.plugins().getDspPlugins()) if (p.id == "nx.tone") toneOn = p.enabled && p.error.isEmpty();
+    t.check (toneOk && toneOn, "plug-in DSP du catalogue installé, bibliothèque chargée et activé"_t
+                               + (installError.isNotEmpty() ? " (" + installError + ")" : juce::String()));
+    app.navigate ({ nx::PageId::UserPlugins, "installes" });
+    t.check (market.getNumCards() == 2, "onglet Installés : "_t + juce::String (market.getNumCards()) + " plug-ins");
+    app.navigate ({ nx::PageId::NowPlaying });
+    shoot ("10b_spectre_circulaire");
+    app.navigate ({ nx::PageId::UserPlugins, "installes" });
+    t.check (shoot ("14_plugins_installes") > 40, "plug-ins installés par l'utilisateur"_t);
+    juce::String removeError;
+    const bool removed = market.removeUserPlugin ("nx.tone", removeError);
+    bool stillThere = false;
+    for (auto& p : app.plugins().getDspPlugins()) if (p.id == "nx.tone") stillThere = true;
+    t.check (removed && ! stillThere, "retrait d'un plug-in utilisateur"_t + (removeError.isNotEmpty() ? " (" + removeError + ")" : juce::String()));
+    app.plugins().setUiPluginEnabled ("nx.radial", false);
+
+    // History (‹ ›) and the sidebar toggle
+    app.navigate ({ nx::PageId::Home });
+    app.navigate ({ nx::PageId::Albums });
+    app.navigate ({ nx::PageId::Settings });
+    main->goBack();
+    const bool backOk = main->getCurrentPage().page == nx::PageId::Albums;
+    main->goBack();
+    const bool back2Ok = main->getCurrentPage().page == nx::PageId::Home && main->canGoForward();
+    main->goForward();
+    const bool fwdOk = main->getCurrentPage().page == nx::PageId::Albums;
+    app.navigate ({ nx::PageId::Artists });
+    t.check (backOk && back2Ok && fwdOk && ! main->canGoForward(), "historique : ‹ revient en arrière, › avance, une nouvelle page efface l'avant"_t);
+    main->setSidebarVisible (false, false);
+    t.check (! main->sidebar.isVisible() && main->sidebarButton.getX() <= 16, "barre latérale masquée : le contenu prend toute la largeur"_t);
+    shoot ("15_barre_laterale_masquee");
+    main->setSidebarVisible (true, false);
 
     // mini player
     nx::MiniPlayer mini (app);
@@ -354,7 +450,7 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
     mini.trackChanged();
     settle (100);
     const auto miniImg = mini.createComponentSnapshot (mini.getLocalBounds());
-    savePng (miniImg, shots.getChildFile ("10_mini_lecteur.png"));
+    savePng (miniImg, shots.getChildFile ("11_mini_lecteur.png"));
     t.check (colourVariety (miniImg) > 20, "mini-lecteur");
     t.info ("captures : " + shots.getFullPathName());
 }

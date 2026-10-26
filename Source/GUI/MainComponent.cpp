@@ -91,7 +91,11 @@ void Toast::paint (juce::Graphics& g)
 
 //==============================================================================
 MainComponent::MainComponent (AppContext& c)
-    : background (c), sidebar (c), player (c), ctx (c), listing (c), nowPlaying (c), sourcePage (c), settingsPage (c), queue (c), toast (c)
+    : background (c), sidebar (c), player (c),
+      sidebarButton (style::Icon::SidebarToggle, "Afficher / masquer la barre latérale"_t, c),
+      backButton (style::Icon::ChevronLeft, "Précédent"_t, c),
+      forwardButton (style::Icon::ChevronRight, "Suivant", c),
+      ctx (c), listing (c), nowPlaying (c), sourcePage (c), settingsPage (c), marketplace (c), queue (c), toast (c)
 {
     homeSlot = std::make_unique<PluginSlot> (c, "home.top");
     addAndMakeVisible (background);
@@ -100,6 +104,22 @@ MainComponent::MainComponent (AppContext& c)
     addChildComponent (nowPlaying);
     addChildComponent (sourcePage);
     addChildComponent (settingsPage);
+    addChildComponent (marketplace);
+    for (auto* b : { &sidebarButton, &backButton, &forwardButton }) addAndMakeVisible (b);
+    sidebarButton.onClick = [this] { setSidebarVisible (! sidebarVisible); };
+    backButton.onClick = [this] { goBack(); };
+    forwardButton.onClick = [this] { goForward(); };
+    sidebarVisible = (bool) ctx.settings().get ("sidebarVisible", true);
+    sidebarAmount = sidebarVisible ? 1.0f : 0.0f;
+    sidebar.setVisible (sidebarVisible);
+    sidebarAnim.tick = [this]
+    {
+        const float target = sidebarVisible ? 1.0f : 0.0f;
+        const float step = (1.0f / 60.0f) / 0.2f * ctx.theme().number ("--nx-animation-speed", 1.0f);
+        sidebarAmount = sidebarAmount < target ? juce::jmin (target, sidebarAmount + step) : juce::jmax (target, sidebarAmount - step);
+        if (sidebarAmount == target) { sidebarAnim.stopTimer(); sidebar.setVisible (sidebarVisible); }
+        resized();
+    };
     addAndMakeVisible (player);
     addChildComponent (queue);
     addChildComponent (toast);
@@ -141,14 +161,26 @@ void MainComponent::resized()
     player.setBounds (position == "top" ? r.removeFromTop (playerH) : r.removeFromBottom (playerH));
     if (position == "top") r.removeFromTop (margin); else r.removeFromBottom (margin);
 
+    // Sidebar: slides out to the left (Cider-style toggle), the content takes the room.
     const int sideW = (int) ctx.layout.getProperty ("sidebarWidth", t.number ("--nx-sidebar-width", 236.0f));
-    sidebar.setBounds (r.removeFromLeft (sideW));
-    r.removeFromLeft (margin);
+    const float ease = sidebarAmount * sidebarAmount * (3.0f - 2.0f * sidebarAmount);
+    const int shown = juce::roundToInt ((float) (sideW + margin) * ease);
+    sidebar.setBounds (r.getX() - (sideW + margin) + shown, r.getY(), sideW, r.getHeight());
+    r.removeFromLeft (shown);
+
+    // Navigation row: sidebar toggle, back, forward.
+    auto nav = r.removeFromTop (34);
+    for (auto* b : { &sidebarButton, &backButton, &forwardButton })
+    {
+        b->setBounds (nav.removeFromLeft (34).reduced (2));
+        nav.removeFromLeft (2);
+    }
+    r.removeFromTop (2);
 
     if (queueVisible) queue.setBounds (r.removeFromRight (juce::jmin (340, r.getWidth() / 3)).withTrimmedLeft (0));
     if (queueVisible) r.removeFromRight (margin);
 
-    for (auto* p : std::initializer_list<juce::Component*> { &listing, &nowPlaying, &sourcePage, &settingsPage }) p->setBounds (r);
+    for (auto* p : std::initializer_list<juce::Component*> { &listing, &nowPlaying, &sourcePage, &settingsPage, &marketplace }) p->setBounds (r);
     toast.setBounds (getLocalBounds().withSizeKeepingCentre (juce::jmin (640, getWidth() - 40), 40).withY (getHeight() - playerH - margin * 2 - 52));
 }
 
@@ -163,16 +195,63 @@ void MainComponent::showPage (juce::Component* page)
     startTimerHz (60);
 }
 
+void MainComponent::setSidebarVisible (bool visible, bool animate)
+{
+    sidebarVisible = visible;
+    ctx.settings().set ("sidebarVisible", visible);
+    sidebarButton.active = false;
+    if (visible) sidebar.setVisible (true);
+    if (animate && isShowing()) sidebarAnim.startTimerHz (60);
+    else { sidebarAmount = visible ? 1.0f : 0.0f; sidebar.setVisible (visible); resized(); }
+}
+
 void MainComponent::navigate (const PageRequest& r)
 {
+    // History: drop the "forward" part, collapse consecutive searches (typing) into one entry.
+    if (historyPos >= 0 && history[(size_t) historyPos] == r) { open (r); return; }
+    history.resize ((size_t) (historyPos + 1));
+    if (! history.empty() && history.back().page == PageId::Search && r.page == PageId::Search) history.back() = r;
+    else history.push_back (r);
+    if (history.size() > 200) history.erase (history.begin());
+    historyPos = (int) history.size() - 1;
+    open (r);
+}
+
+void MainComponent::goBack()
+{
+    if (! canGoBack()) return;
+    open (history[(size_t) --historyPos]);
+}
+
+void MainComponent::goForward()
+{
+    if (! canGoForward()) return;
+    open (history[(size_t) ++historyPos]);
+}
+
+void MainComponent::updateNavButtons()
+{
+    backButton.setEnabled (canGoBack());
+    forwardButton.setEnabled (canGoForward());
+}
+
+void MainComponent::open (const PageRequest& r)
+{
     current = r;
+    updateNavButtons();
     sidebar.setActive (r);
     player.lyricsButton.active = r.page == PageId::NowPlaying && nowPlaying.showLyrics;
     player.lyricsButton.repaint();
 
     if (r.page == PageId::NowPlaying) { nowPlaying.trackChanged(); showPage (&nowPlaying); return; }
-    if (r.page == PageId::Source) { sourcePage.setSource (r.a); showPage (&sourcePage); return; }
+    if (r.page == PageId::Source) { sourcePage.setSource (r.a, r.b); showPage (&sourcePage); return; }
     if (r.page == PageId::Settings) { settingsPage.refresh(); showPage (&settingsPage); return; }
+    if (r.page == PageId::Marketplace || r.page == PageId::UserPlugins)
+    {
+        marketplace.setMode (r.page == PageId::UserPlugins ? MarketplacePage::Mode::UserPlugins : MarketplacePage::Mode::Gallery, r.a);
+        showPage (&marketplace);
+        return;
+    }
 
     auto& lib = ctx.library();
     listing.hero = false;
@@ -337,6 +416,7 @@ void MainComponent::refreshCurrentPage()
 {
     if (visiblePage == &listing) listing.refresh();
     else if (visiblePage == &sourcePage) sourcePage.refresh();
+    else if (visiblePage == &marketplace) marketplace.refresh();
     sidebar.refresh();
 }
 
@@ -361,6 +441,7 @@ void MainComponent::themeChanged()
     resized();
     for (auto* p : std::initializer_list<juce::Component*> { &listing, &sourcePage }) p->resized();
     settingsPage.refresh();
+    if (current.page == PageId::Marketplace || current.page == PageId::UserPlugins) marketplace.refresh();
     repaint();
 }
 
@@ -372,6 +453,7 @@ void MainComponent::pluginsChanged()
     homeSlot->refreshPlugins();
     if (current.page == PageId::Home) listing.refresh();
     if (current.page == PageId::Settings) settingsPage.refresh();
+    if (current.page == PageId::Marketplace || current.page == PageId::UserPlugins) marketplace.refresh();
 }
 
 void MainComponent::timerCallback()
@@ -393,6 +475,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress ('m', juce::ModifierKeys::commandModifier, 0)) { ctx.toggleMiniPlayer(); return true; }
     if (k == juce::KeyPress (juce::KeyPress::rightKey, juce::ModifierKeys::commandModifier, 0)) { e.next(); return true; }
     if (k == juce::KeyPress (juce::KeyPress::leftKey, juce::ModifierKeys::commandModifier, 0)) { e.previous(); return true; }
+    // Navigation history and sidebar
+    if (k == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0) || k == juce::KeyPress (juce::KeyPress::leftKey, juce::ModifierKeys::altModifier, 0)) { goBack(); return true; }
+    if (k == juce::KeyPress (']', juce::ModifierKeys::commandModifier, 0) || k == juce::KeyPress (juce::KeyPress::rightKey, juce::ModifierKeys::altModifier, 0)) { goForward(); return true; }
+    if (k == juce::KeyPress ('b', juce::ModifierKeys::commandModifier, 0)) { setSidebarVisible (! sidebarVisible); return true; }
     return false;
 }
 

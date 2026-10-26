@@ -1,0 +1,12 @@
+{
+  "id": "nx.session",
+  "name": "Horloge & session d'écoute",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Heure, durée d'écoute de la session, nombre de morceaux joués et format en cours, avec un anneau de progression du morceau.",
+  "main": "plugin.js",
+  "slots": ["sidebar.bottom", "home.top", "nowplaying.side"],
+  "fps": 10,
+  "preferredHeight": 96,
+  "enabledByDefault": false
+}

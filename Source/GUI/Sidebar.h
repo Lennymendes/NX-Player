@@ -15,6 +15,7 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void setActive (const PageRequest& r) { active = r; repaint(); }
     void refresh();
     void refreshPlugins() { pluginSlot.refreshPlugins(); resized(); }

@@ -1,0 +1,50 @@
+/* Ocean Blue — thème livré avec NX Player (variables : docs/THEMES.md). */
+:root {
+  /* Fond et surfaces */
+  --nx-bg: #070B12;
+  --nx-bg-2: #0B1220;
+  --nx-surface: #0F1828;
+  --nx-glass-tint: rgba(8, 14, 26, 0.55);
+  --nx-glass-strong: rgba(6, 11, 21, 0.82);
+  --nx-border: rgba(255, 255, 255, 0.08);
+  --nx-highlight: rgba(255, 255, 255, 0.06);
+  --nx-shadow: rgba(0, 0, 0, 0.55);
+
+  /* Texte */
+  --nx-text: #EAF1FB;
+  --nx-text-dim: #8494AD;
+
+  /* Accents */
+  --nx-accent: #3D8BFF;
+  --nx-accent-2: #7CD4FF;
+  --nx-on-accent: #FFFFFF;
+
+  /* Qualité du signal (Signal Path) */
+  --nx-quality-bitperfect: #B07CFF;
+  --nx-quality-enhanced: var(--nx-accent);
+  --nx-quality-high: #7FE3C0;
+  --nx-quality-low: #FFB547;
+
+  /* Formes et dimensions */
+  --nx-radius: 16px;
+  --nx-radius-small: 8px;
+  --nx-sidebar-width: 236px;
+  --nx-player-height: 84px;
+  --nx-player-position: bottom;
+  --nx-card-size: 176px;
+
+  /* Arrière-plan pochette */
+  --nx-artwork-blur: 48;
+  --nx-artwork-dim: 0.58;
+  --nx-artwork-saturation: 1.25;
+
+  /* Paroles */
+  --nx-lyrics-active: var(--nx-text);
+  --nx-lyrics-inactive: rgba(234, 241, 251, 0.28);
+  --nx-lyrics-size: 30px;
+
+  /* Typographie et animations */
+  --nx-font: "";
+  --nx-font-size: 14px;
+  --nx-animation-speed: 1.0;
+}

@@ -1,0 +1,50 @@
+/* Glass Rose — thème livré avec NX Player (variables : docs/THEMES.md). */
+:root {
+  /* Fond et surfaces */
+  --nx-bg: #0D0A0C;
+  --nx-bg-2: #160F13;
+  --nx-surface: #1A1217;
+  --nx-glass-tint: rgba(22, 12, 17, 0.50);
+  --nx-glass-strong: rgba(16, 9, 13, 0.82);
+  --nx-border: rgba(255, 255, 255, 0.08);
+  --nx-highlight: rgba(255, 255, 255, 0.06);
+  --nx-shadow: rgba(0, 0, 0, 0.55);
+
+  /* Texte */
+  --nx-text: #F7EEF1;
+  --nx-text-dim: #A08F96;
+
+  /* Accents */
+  --nx-accent: #FA2D55;
+  --nx-accent-2: #FF7A93;
+  --nx-on-accent: #FFFFFF;
+
+  /* Qualité du signal (Signal Path) */
+  --nx-quality-bitperfect: #C9A2FF;
+  --nx-quality-enhanced: var(--nx-accent);
+  --nx-quality-high: #7FE3C0;
+  --nx-quality-low: #FFB547;
+
+  /* Formes et dimensions */
+  --nx-radius: 12px;
+  --nx-radius-small: 8px;
+  --nx-sidebar-width: 236px;
+  --nx-player-height: 84px;
+  --nx-player-position: bottom;
+  --nx-card-size: 176px;
+
+  /* Arrière-plan pochette */
+  --nx-artwork-blur: 48;
+  --nx-artwork-dim: 0.50;
+  --nx-artwork-saturation: 1.4;
+
+  /* Paroles */
+  --nx-lyrics-active: var(--nx-text);
+  --nx-lyrics-inactive: rgba(247, 238, 241, 0.28);
+  --nx-lyrics-size: 30px;
+
+  /* Typographie et animations */
+  --nx-font: "";
+  --nx-font-size: 14px;
+  --nx-animation-speed: 1.0;
+}

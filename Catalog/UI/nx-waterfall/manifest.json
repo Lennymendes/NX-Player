@@ -1,0 +1,12 @@
+{
+  "id": "nx.waterfall",
+  "name": "Spectrogramme",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Spectrogramme défilant (cascade) : l'intensité de chaque bande au fil du temps, du grave à gauche à l'aigu à droite.",
+  "main": "plugin.js",
+  "slots": ["nowplaying.side", "home.top"],
+  "fps": 30,
+  "preferredHeight": 160,
+  "enabledByDefault": false
+}

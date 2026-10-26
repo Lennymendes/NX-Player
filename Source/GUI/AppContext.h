@@ -17,12 +17,14 @@ class ArtworkCache;
 class LibraryScanner;
 
 enum class PageId { Home, Search, RecentlyAdded, Albums, AlbumDetail, Artists, ArtistDetail, Songs, Playlists, PlaylistDetail,
-                    Source, NowPlaying, Settings };
+                    Source, NowPlaying, Settings, Marketplace, UserPlugins };
 
 struct PageRequest
 {
     PageId page = PageId::Home;
-    juce::String a, b;        // album artist / album, artist, playlist id, source id, search text
+    juce::String a, b;        // album artist / album, artist, playlist id, source id (+ NAS folder), search text, tab
+    bool operator== (const PageRequest& o) const noexcept { return page == o.page && a == o.a && b == o.b; }
+    bool operator!= (const PageRequest& o) const noexcept { return ! operator== (o); }
 };
 
 struct AppSettings
@@ -70,6 +72,11 @@ public:
     virtual void selectDevice (const juce::String& name) = 0;
     virtual void applyTheme (const juce::String& id) = 0;
     virtual void showMessage (const juce::String& text) = 0;
+    /** User data folder (settings, library, user themes and plug-ins) and bundled resources folder. */
+    virtual juce::File userDataDirectory() = 0;
+    virtual juce::File resourcesDirectory() = 0;
+    /** Remembers the NAS servers found so far (they reconnect at the next launch without discovery). */
+    virtual void saveNasServers() = 0;
 
     /** The blurred artwork behind the window (for glass panels), in main-window coordinates. */
     virtual const juce::Image& backdrop() = 0;

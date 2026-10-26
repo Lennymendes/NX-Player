@@ -1,0 +1,2 @@
+{ "id": "nx.tone", "name": "Tonalité & balance", "type": "dsp", "version": "1.0",
+  "author": "NX Audio Suite", "description": "Correcteur graves / aigus (filtres en plateau) et balance gauche / droite.", "library": "tone" }

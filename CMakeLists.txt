@@ -10,6 +10,7 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
 endif()
 
+option(NX_ENABLE_STREAMING "Sources Qobuz / Tidal / Spotify / YouTube dans l'interface" OFF)
 option(NX_LTO "Optimisation à l'édition de liens (versions publiées)" OFF)
 option(NX_ENABLE_OPENGL "Arrière-plans GLSL des thèmes (juce_opengl)" ON)
 set(NX_JUCE_DIR "" CACHE PATH "JUCE local (sinon téléchargé : 8.0.15)")
@@ -81,7 +82,11 @@ juce_add_gui_app(NXPlayer
     MICROPHONE_PERMISSION_ENABLED FALSE
     DOCUMENT_EXTENSIONS flac wav aif aiff dsf dff m4a
     NEEDS_CURL ${NX_NEEDS_CURL}
-    NEEDS_WEB_BROWSER FALSE)
+    NEEDS_WEB_BROWSER FALSE
+    PLIST_TO_MERGE [[<plist><dict>
+        <key>NSLocalNetworkUsageDescription</key>
+        <string>NX Player recherche et lit les serveurs de musique UPnP / DLNA (NAS) de votre réseau local.</string>
+    </dict></plist>]])
 
 file(GLOB_RECURSE NX_SOURCES CONFIGURE_DEPENDS
     Source/*.cpp Source/*.h
@@ -104,6 +109,7 @@ if(WIN32)
 endif()
 target_sources(NXPlayer PRIVATE ${NX_SOURCES})
 target_include_directories(NXPlayer PRIVATE Source)
+target_compile_definitions(NXPlayer PRIVATE NX_ENABLE_STREAMING=$<IF:$<BOOL:${NX_ENABLE_STREAMING}>,1,0>)
 
 # Built-in service credentials (optional). Given as -D options or environment variables (CI: repository
 # secrets), compiled into the app so users only sign in with their own account. Empty = the source page asks.
@@ -216,8 +222,8 @@ if(APPLE)
     target_link_libraries(NXPlayer PRIVATE "-framework CoreAudio" "-framework AudioToolbox")
 endif()
 
-# Thèmes et plug-ins livrés avec l'application.
-set(NX_RUNTIME_DIRS Themes Plugins)
+# Thèmes et plug-ins livrés avec l'application (Catalog : plug-ins supplémentaires à installer en un clic).
+set(NX_RUNTIME_DIRS Themes Plugins Catalog)
 foreach(dir IN LISTS NX_RUNTIME_DIRS)
     if(APPLE)
         add_custom_command(TARGET NXPlayer POST_BUILD
@@ -247,4 +253,23 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Plugins/DSP/crossfeed/crossfeed.c)
     add_custom_command(TARGET NXPlayer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${NX_PLUGIN_DEST}"
         COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:nx_crossfeed> "${NX_PLUGIN_DEST}/")
+endif()
+
+#-------------------------------------------------------------------------------- Catalogue : plug-in DSP « Tonalité & balance »
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Catalog/DSP/tone/tone.c)
+    add_library(nx_tone MODULE Catalog/DSP/tone/tone.c)
+    target_include_directories(nx_tone PRIVATE Source/Ext)
+    set_target_properties(nx_tone PROPERTIES PREFIX "" OUTPUT_NAME "tone")
+    if(NOT WIN32)
+        target_link_libraries(nx_tone PRIVATE m)
+    endif()
+    add_dependencies(NXPlayer nx_tone)
+    if(APPLE)
+        set(NX_TONE_DEST "$<TARGET_BUNDLE_CONTENT_DIR:NXPlayer>/Resources/Catalog/DSP/tone")
+    else()
+        set(NX_TONE_DEST "$<TARGET_FILE_DIR:NXPlayer>/Catalog/DSP/tone")
+    endif()
+    add_custom_command(TARGET NXPlayer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${NX_TONE_DEST}"
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:nx_tone> "${NX_TONE_DEST}/")
 endif()

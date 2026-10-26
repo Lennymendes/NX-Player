@@ -1,0 +1,13 @@
+{
+  "id": "glass-rose",
+  "name": "Glass Rose",
+  "author": "NX Audio Suite",
+  "version": "1.0",
+  "description": "Verre dépoli chaud, accents rose framboise, pochette très saturée en arrière-plan.",
+  "stylesheet": "theme.css",
+  "background": {
+    "type": "artwork",
+    "fallback": "mesh",
+    "speed": 0.18
+  }
+}

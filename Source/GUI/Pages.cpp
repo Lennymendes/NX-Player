@@ -162,9 +162,10 @@ void SourcePage::addText (const juce::String& text, bool dim)
     contentComp.addAndMakeVisible (l);
 }
 
-void SourcePage::setSource (const juce::String& id)
+void SourcePage::setSource (const juce::String& id, const juce::String& arg)
 {
     sourceId = id;
+    sourceArg = arg;
     rows.clear();
     rowHeights.clear();
     tracks.reset();
@@ -216,79 +217,195 @@ void SourcePage::buildLocal()
     contentComp.addAndMakeVisible (*albums);
 }
 
+juce::String SourcePage::upnpArg (const juce::String& udn, const juce::String& objectId, const juce::StringArray& path)
+{
+    return udn + "\x1f" + objectId + "\x1f" + path.joinIntoString ("\x1e");
+}
+
 void SourcePage::buildUpnp()
 {
     heading = "NAS (UPnP / DLNA)";
-    description = "Serveurs de musique du réseau local (MinimServer, Asset, Synology, QNAP, JRiver…). Les morceaux sont lus en flux HTTP "_t
+    description = "Serveurs de musique du réseau local (MinimServer, Asset, Synology, QNAP, JRiver, Jellyfin…). Les morceaux sont lus en flux HTTP "_t
                   "par le moteur de NX Player, donc en bit-perfect. Pour un partage SMB, ajoutez simplement le dossier monté dans Fichiers locaux."_t;
     auto* upnp = dynamic_cast<UpnpProvider*> (ctx.providers().getProvider ("upnp"));
     if (upnp == nullptr) return;
+    juce::Component::SafePointer<SourcePage> safe (this);
+    auto* app = &ctx;
 
-    addButton ("Rechercher les serveurs", [this, upnp]
+    const auto parts = juce::StringArray::fromTokens (sourceArg, "\x1f", {});
+    if (sourceArg.isNotEmpty() && parts.size() >= 2)
     {
-        ctx.showMessage ("Recherche des serveurs UPnP…"_t);
-        juce::Component::SafePointer<SourcePage> safe (this);
-        juce::Thread::launch ([safe, upnp]
-        {
-            upnp->discover (2500);
-            juce::MessageManager::callAsync ([safe] { if (safe) safe->setSource ("upnp"); });
-        });
-    });
+        // ---- inside a server folder -----------------------------------------------------------
+        const auto udn = parts[0], objectId = parts[1];
+        const auto path = juce::StringArray::fromTokens (parts[2], "\x1e", {});
+        UpnpServer server;
+        for (auto& sv : upnp->getServers()) if (sv.udn == udn) server = sv;
+        if (server.udn.isEmpty()) { addText ("Ce serveur n'est plus disponible : relancez la recherche."_t); return; }
+        heading = path.isEmpty() ? server.name : path[path.size() - 1];
+        description = path.size() > 1 ? path.joinIntoString ("  ›  "_t, 0, path.size() - 1) : server.name;
 
-    if (! breadcrumb.isEmpty() && browseServer.udn.isNotEmpty())
-    {
-        addText (browseServer.name + "  ›  "_t + breadcrumb.joinIntoString ("  ›  "_t), false);
-        addButton ("Importer ce dossier dans la bibliothèque"_t, [this, upnp]
+        const auto key = udn + "|" + objectId;
+        auto it = upnpCache.find (key);
+        if (it == upnpCache.end())
         {
-            const auto server = browseServer;
-            const auto id = browseEntries.empty() ? juce::String ("0") : browseEntries.front().parentId;
-            auto* lib = &ctx.library();
-            auto* app = &ctx;
-            juce::Component::SafePointer<SourcePage> safe (this);
-            juce::Thread::launch ([safe, app, lib, upnp, server, id]
+            addText ("Chargement du dossier…"_t);
+            if (! upnpLoading.contains (key))
             {
-                const int n = upnp->importContainer (*lib, server, id);
+                upnpLoading.add (key);
+                const auto arg = sourceArg;
+                juce::Thread::launch ([safe, upnp, server, objectId, key, arg]
+                {
+                    auto entries = upnp->browseAll (server, objectId);
+                    const auto err = upnp->lastError;
+                    juce::MessageManager::callAsync ([safe, entries, key, arg, err]
+                    {
+                        if (safe == nullptr) return;
+                        safe->upnpLoading.removeString (key);
+                        safe->upnpCache[key] = entries;
+                        if (entries.empty() && err.isNotEmpty()) safe->ctx.showMessage (err);
+                        if (safe->sourceId == "upnp" && safe->sourceArg == arg) safe->setSource ("upnp", arg);
+                    });
+                });
+            }
+            return;
+        }
+
+        const auto& entries = it->second;
+        std::vector<TrackInfo> items;
+        std::vector<AlbumInfo> folders;
+        for (auto& e : entries)
+        {
+            if (! e.isContainer) { items.push_back (e.track); continue; }
+            AlbumInfo a;
+            a.title = e.title;
+            a.artist = e.track.artist.isNotEmpty() ? e.track.artist
+                     : (e.childCount >= 0 ? juce::String (e.childCount) + " éléments"_t : juce::String ("Dossier"));
+            a.artworkKey = e.track.artworkKey;
+            a.source = e.id;
+            folders.push_back (a);
+        }
+
+        addButton (items.empty() ? juce::String ("Tout lire (sous-dossiers compris)"_t) : juce::String ("Lire ce dossier"), [safe, upnp, server, objectId, app]
+        {
+            app->showMessage ("Préparation de la lecture…"_t);
+            juce::Thread::launch ([safe, upnp, server, objectId, app]
+            {
+                auto all = upnp->collectTracks (server, objectId, 5000);
+                juce::MessageManager::callAsync ([safe, all, app]
+                {
+                    if (safe == nullptr) return;
+                    if (all.empty()) app->showMessage ("Aucun morceau dans ce dossier"_t);
+                    else app->playTracks (all, 0);
+                });
+            });
+        });
+        addButton ("Importer dans la bibliothèque"_t, [safe, upnp, server, objectId, app]
+        {
+            auto* lib = &app->library();
+            juce::Thread::launch ([safe, app, lib, upnp, server, objectId]
+            {
+                const int n = upnp->importContainer (*lib, server, objectId);
                 juce::MessageManager::callAsync ([safe, app, n] { if (safe != nullptr) app->showMessage (juce::String (n) + " morceaux importés depuis le NAS"_t); });
             });
         });
-        for (auto& e : browseEntries)
-            if (e.isContainer)
-                addButton (e.title + (e.childCount > 0 ? "  (" + juce::String (e.childCount) + ")" : juce::String()), [this, e] { browseUpnp (browseServer, e.id, e.title); });
-        std::vector<TrackInfo> items;
-        for (auto& e : browseEntries) if (! e.isContainer) items.push_back (e.track);
+        addText (juce::String ((int) folders.size()) + " dossier(s) · "_t + juce::String ((int) items.size()) + " morceau(x)"_t);
+
+        if (! folders.empty())
+        {
+            albums = std::make_unique<AlbumGrid> (ctx);
+            albums->setAlbums (folders);
+            albums->onOpen = [this, udn, path] (const AlbumInfo& a)
+            {
+                auto deeper = path;
+                deeper.add (a.title);
+                ctx.navigate ({ PageId::Source, "upnp", upnpArg (udn, a.source, deeper) });
+            };
+            albums->onPlay = [safe, upnp, server, app] (const AlbumInfo& a)
+            {
+                const auto id = a.source;
+                juce::Thread::launch ([safe, upnp, server, id, app]
+                {
+                    auto all = upnp->collectTracks (server, id, 5000);
+                    juce::MessageManager::callAsync ([safe, all, app] { if (safe != nullptr && ! all.empty()) app->playTracks (all, 0); });
+                });
+            };
+            contentComp.addAndMakeVisible (*albums);
+        }
         if (! items.empty())
         {
             tracks = std::make_unique<TrackList> (ctx);
-            tracks->setTracks (items, false, true, true);
+            tracks->setTracks (items, true, true, true);
             contentComp.addAndMakeVisible (*tracks);
         }
         return;
     }
 
-    const auto servers = upnp->getServers();
-    if (servers.empty()) addText ("Aucun serveur trouvé pour l'instant."_t);
-    for (auto& s : servers)
-        addButton (s.name, [this, s] { browseUpnp (s, "0", s.name); });
-}
-
-void SourcePage::browseUpnp (const UpnpServer& server, const juce::String& objectId, const juce::String& title)
-{
-    auto* upnp = dynamic_cast<UpnpProvider*> (ctx.providers().getProvider ("upnp"));
-    if (upnp == nullptr) return;
-    juce::Component::SafePointer<SourcePage> safe (this);
-    juce::Thread::launch ([safe, upnp, server, objectId, title]
+    // ---- server list ----------------------------------------------------------------------------
+    addButton ("Rechercher les serveurs du réseau"_t, [safe, upnp, app]
     {
-        auto entries = upnp->browse (server, objectId);
-        juce::MessageManager::callAsync ([safe, server, title, entries, objectId]
+        app->showMessage ("Recherche des serveurs UPnP / DLNA…"_t);
+        juce::Thread::launch ([safe, upnp, app]
         {
-            if (safe == nullptr) return;
-            safe->browseServer = server;
-            if (objectId == "0") safe->breadcrumb.clear();
-            safe->breadcrumb.add (title);
-            safe->browseEntries = entries;
-            safe->setSource ("upnp");
+            const auto found = upnp->discover (3000);
+            const auto err = upnp->lastError;
+            juce::MessageManager::callAsync ([safe, app, found, err]
+            {
+                if (safe == nullptr) return;
+                app->saveNasServers();
+                app->showMessage (found.empty() ? err : juce::String ((int) found.size()) + " serveur(s) trouvé(s)"_t);
+                safe->setSource ("upnp");
+            });
         });
     });
+
+    auto* address = addField ("Adresse IP du NAS ou URL de description (ex. 192.168.1.20)"_t, "__nas_address", true);
+    address->setPasswordCharacter (0);
+    auto connect = [safe, upnp, app, address]
+    {
+        auto text = address->getText().trim();
+        if (text.isEmpty()) return;
+        app->showMessage ("Connexion à "_t + text + "…"_t);
+        juce::Thread::launch ([safe, upnp, app, text]
+        {
+            const auto before = upnp->getServers().size();
+            bool ok;
+            if (text.containsChar ('/')) ok = upnp->addServerFromLocation (text.startsWith ("http") ? text : "http://" + text);
+            else ok = upnp->discoverHost (text.upToFirstOccurrenceOf (":", false, false)).size() > before;
+            const auto err = upnp->lastError;
+            juce::MessageManager::callAsync ([safe, app, ok, err]
+            {
+                if (safe == nullptr) return;
+                app->saveNasServers();
+                app->showMessage (ok ? juce::String ("Serveur ajouté"_t) : err);
+                safe->setSource ("upnp");
+            });
+        });
+    };
+    address->onReturnKey = connect;
+    addButton ("Ajouter ce serveur"_t, connect);
+
+    const auto servers = upnp->getServers();
+    if (servers.empty())
+    {
+        addText ("Aucun serveur trouvé pour l'instant. Vérifiez que le serveur UPnP / DLNA du NAS est activé (MinimServer, "_t
+                 "Synology Media Server, Asset…) ; si votre réseau filtre la découverte automatique, entrez l'adresse IP du NAS ci-dessus."_t);
+        return;
+    }
+    std::vector<AlbumInfo> cards;
+    for (auto& sv : servers)
+    {
+        AlbumInfo a;
+        a.title = sv.name;
+        a.artist = juce::URL (sv.location).getDomain();
+        a.artworkKey = sv.iconUrl;
+        a.source = sv.udn;
+        cards.push_back (a);
+    }
+    albums = std::make_unique<AlbumGrid> (ctx);
+    albums->setAlbums (cards);
+    albums->onOpen = [this] (const AlbumInfo& a) { ctx.navigate ({ PageId::Source, "upnp", upnpArg (a.source, "0", { a.title }) }); };
+    albums->onPlay = albums->onOpen;
+    contentComp.addAndMakeVisible (*albums);
 }
 
 void SourcePage::buildProvider (MediaProvider& p)

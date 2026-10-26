@@ -1,0 +1,12 @@
+{
+  "id": "nx.radial",
+  "name": "Spectre circulaire",
+  "version": "1.0",
+  "author": "NX Audio Suite",
+  "description": "Spectre 64 bandes enroulé en anneau, qui respire avec le niveau RMS. Idéal à côté de la pochette.",
+  "main": "plugin.js",
+  "slots": ["nowplaying.side", "home.top"],
+  "fps": 60,
+  "preferredHeight": 220,
+  "enabledByDefault": false
+}

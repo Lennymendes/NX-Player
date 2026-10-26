@@ -5,6 +5,7 @@
 #include "Widgets.h"
 #include "../Providers/MediaProvider.h"
 #include "../Providers/UpnpProvider.h"
+#include <map>
 
 namespace nx
 {
@@ -42,27 +43,27 @@ class SourcePage : public ScrollPage
 {
 public:
     explicit SourcePage (AppContext& c);
-    void setSource (const juce::String& id);
+    /** id: "local", "upnp"... arg (NAS): server udn, folder id and breadcrumb (see upnpArg()). */
+    void setSource (const juce::String& id, const juce::String& arg = {});
     void layoutContent (int width) override;
-    void refresh() override { setSource (sourceId); }
+    void refresh() override { setSource (sourceId, sourceArg); }
+    static juce::String upnpArg (const juce::String& udn, const juce::String& objectId, const juce::StringArray& path);
 
 private:
     void buildLocal();
     void buildUpnp();
     void buildProvider (MediaProvider& p);
-    void browseUpnp (const UpnpServer& server, const juce::String& objectId, const juce::String& title);
     juce::TextEditor* addField (const juce::String& label, const juce::String& key, bool password = false);
     juce::TextButton* addButton (const juce::String& text, std::function<void()> fn);
     void addText (const juce::String& text, bool dim = true);
 
-    juce::String sourceId, heading, description;
+    juce::String sourceId, sourceArg, heading, description;
     juce::OwnedArray<juce::Component> rows;
     std::vector<int> rowHeights;
     std::unique_ptr<TrackList> tracks;
     std::unique_ptr<AlbumGrid> albums;
-    std::vector<UpnpEntry> browseEntries;
-    UpnpServer browseServer;
-    juce::StringArray breadcrumb;
+    std::map<juce::String, std::vector<UpnpEntry>> upnpCache;   // "udn|objectId" -> children
+    juce::StringArray upnpLoading;
 };
 
 class SettingsPage : public ScrollPage

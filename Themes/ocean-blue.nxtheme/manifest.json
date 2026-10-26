@@ -1,0 +1,13 @@
+{
+  "id": "ocean-blue",
+  "name": "Ocean Blue",
+  "author": "NX Audio Suite",
+  "version": "1.0",
+  "description": "Bleu nuit profond, accents azur, dégradé maillé animé quand rien ne joue.",
+  "stylesheet": "theme.css",
+  "background": {
+    "type": "artwork",
+    "fallback": "mesh",
+    "speed": 0.12
+  }
+}

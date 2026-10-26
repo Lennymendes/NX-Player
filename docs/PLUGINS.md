@@ -10,7 +10,12 @@ Plugins/
 
 Emplacements : `Plugins/` à côté de l'application (plug-ins livrés), puis le dossier utilisateur
 (`~/Library/Application Support/NX Player/Plugins`, `%APPDATA%\NX Player\Plugins`, `~/.config/NX Player/Plugins`).
-Activation : Réglages › Plug-ins.
+Activation : barre latérale › **Extensions & Thèmes** (interrupteur sur chaque carte) ou Réglages › Plug-ins.
+
+`Catalog/` (à côté de l'application) contient des plug-ins en plus, non installés : la page **Plugins utilisateur ›
+Catalogue** les affiche avec un aperçu et les copie dans le dossier utilisateur en un clic. Pour proposer le vôtre,
+ajoutez son dossier dans `Catalog/UI` ou `Catalog/DSP` (un plug-in DSP du catalogue est compilé par CMake, voir
+`Catalog/DSP/tone`). « Importer un plugin… » accepte un dossier ou une archive `.zip` contenant `manifest.json`.
 
 ---
 

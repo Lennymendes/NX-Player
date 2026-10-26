@@ -6,6 +6,7 @@
 #include "PlayerBar.h"
 #include "NowPlaying.h"
 #include "Pages.h"
+#include "Marketplace.h"
 
 namespace nx
 {
@@ -46,7 +47,14 @@ public:
     void paint (juce::Graphics&) override {}
     bool keyPressed (const juce::KeyPress&) override;
 
+    /** Opens a page and records it in the history (‹ / › buttons). */
     void navigate (const PageRequest& r);
+    void goBack();
+    void goForward();
+    bool canGoBack() const    { return historyPos > 0; }
+    bool canGoForward() const { return historyPos + 1 < (int) history.size(); }
+    void setSidebarVisible (bool visible, bool animate = true);
+    bool isSidebarVisible() const { return sidebarVisible; }
     void refreshCurrentPage();
     void trackChanged();
     void stateChanged();
@@ -56,20 +64,32 @@ public:
     void setLyrics (const Lyrics& l, const juce::String& status) { nowPlaying.setLyrics (l, status); }
     void showSignalPath();
     PageRequest getCurrentPage() const { return current; }
+    MarketplacePage& getMarketplace() { return marketplace; }
 
     BackgroundComponent background;
     Sidebar sidebar;
     PlayerBar player;
 
+    IconButton sidebarButton, backButton, forwardButton;
+
 private:
+    void open (const PageRequest& r);
+    void updateNavButtons();
     void showPage (juce::Component* page);
     void timerCallback() override;
+    struct Animator : juce::Timer { std::function<void()> tick; void timerCallback() override { tick(); } };
+    Animator sidebarAnim;
+    float sidebarAmount = 1.0f;     // 0 hidden .. 1 shown (animated)
+    bool sidebarVisible = true;
+    std::vector<PageRequest> history;
+    int historyPos = -1;
     float fadeProgress = 1.0f;
     AppContext& ctx;
     ListingPage listing;
     NowPlayingPage nowPlaying;
     SourcePage sourcePage;
     SettingsPage settingsPage;
+    MarketplacePage marketplace;
     QueuePanel queue;
     Toast toast;
     std::unique_ptr<PluginSlot> homeSlot;

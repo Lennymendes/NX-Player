@@ -6,11 +6,15 @@ Windows (ASIO, WASAPI exclusif) · Linux (ALSA). Licence **MIT** (voir « Licenc
 - **Moteur bit-perfect** : les échantillons entiers ne passent jamais par le flottant ; DSD natif (ASIO),
   DoP partout, conversion DSD → DXD 64 bits si le DAC ne prend que le PCM ; gapless ; changement automatique de
   fréquence du DAC ; Signal Path façon Roon.
-- **Bibliothèque unifiée** (SQLite, recherche plein texte) : fichiers locaux et partages montés surveillés,
-  serveurs UPnP / DLNA, Qobuz, Tidal, Spotify et YouTube Music.
-- **Interface façon Cider** : verre dépoli sur la pochette floutée, paroles synchronisées, mini-lecteur.
-- **Extensible** : thèmes `.nxtheme` rechargés à chaud (CSS + shader GLSL), plug-ins d'interface en
-  JavaScript, plug-ins DSP en C.
+- **Bibliothèque locale et réseau** (SQLite, recherche plein texte) : fichiers locaux et partages montés
+  surveillés, serveurs UPnP / DLNA du NAS (découverte automatique ou adresse IP, navigation par dossiers et pochettes).
+  Les connecteurs de streaming (Qobuz, Tidal, Spotify, YouTube Music) restent dans le code mais sont retirés de
+  l'interface pour l'instant (`-DNX_ENABLE_STREAMING=ON` pour les rétablir).
+- **Interface façon Cider 2** : verre dépoli sur la pochette floutée, barre latérale escamotable, boutons ‹ › de
+  l'historique, paroles synchronisées, mini-lecteur.
+- **Extensible** : page « Extensions & Thèmes » (galerie à la Spicetify, aperçus en direct, activation en un clic),
+  page « Plugins utilisateur » (catalogue de plug-ins en plus, import d'un dossier ou d'un .zip), thèmes `.nxtheme`
+  rechargés à chaud (CSS + shader GLSL), plug-ins d'interface en JavaScript, plug-ins DSP en C.
 
 Captures (rendues par le banc d'essai) : `docs/screenshots/`.
 
@@ -28,6 +32,7 @@ cmake --build build --config Release
 | Linux | `libasound2-dev libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libgl1-mesa-dev libsqlite3-dev` |
 
 Options CMake : `NX_JUCE_DIR` (JUCE local), `NX_ENABLE_OPENGL` (shaders de thèmes, ON), `NX_LTO` (OFF ; le linker Xcode récent plante avec LTO),
+`NX_ENABLE_STREAMING` (OFF : sources Qobuz / Tidal / Spotify / YouTube dans l'interface),
 `NX_BUNDLED_SQLITE` (toujours actif sous Windows).
 
 La CI (`.github/workflows/build.yml`) compile macOS, Windows (avec ASIO) et Linux, lance le banc d'essai et publie
@@ -40,7 +45,7 @@ les archives sur une étiquette `v*`.
 "build/NXPlayer_artefacts/Release/NX Player.app/Contents/MacOS/NX Player" --selftest
 ```
 
-19 sections, 133 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
+20 sections, 158 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
 captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 
 | # | Section | Ce qui est prouvé |
@@ -56,7 +61,9 @@ captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 | 201–204 | Bibliothèque | tags (FLAC, ID3v2 dans WAV / DSF, MP4), SQLite + FTS5 (recherche sans accents), veille de dossiers, LRC |
 | 205 | Connecteurs | signature Qobuz, PKCE (RFC 7636), JSON Tidal / Qobuz / Spotify, MPD + fMP4 FLAC → flux FLAC identique, DIDL-Lite, SSDP, fusion des doublons |
 | 206 | NAS | serveur HTTP local → flux progressif → moteur → DAC : bit-perfect |
-| 301 | Interface | chaque page rendue hors écran, thème appliqué à chaud, lecture lancée depuis l'interface |
+| 207 | OAuth | serveur de retour local : préconnexion du navigateur, /favicon.ico, code reçu |
+| 208 | NAS UPnP / DLNA | faux NAS sur 127.0.0.1 : M-SEARCH unicast, Browse paginé (serveur plafonné à 2 par page), meilleure ressource, erreurs SOAP, import, lecture bit-perfect 24 / 96 |
+| 301 | Interface | chaque page rendue hors écran (NAS, galerie, plug-ins), thème à chaud, installation / retrait d'un plug-in du catalogue, historique ‹ ›, barre latérale masquée |
 | 401–403 | Extensions | CSS / var(), rechargement à chaud, export / import ; plug-ins JS (rendu, erreurs, setLayout, rechargement) ; plug-in DSP C dans la chaîne |
 
 Le DAC du banc est virtuel (`CaptureBackend`) : il enregistre ce que le moteur envoie. Les pilotes réels
@@ -104,36 +111,25 @@ Le **Signal Path** reprend les catégories de Roon : *Bit-perfect* (violet), *Am
 *Haute qualité* (sans perte mais modifié), *Qualité réduite* (source avec pertes, mixeur du système). Cliquez sur
 le badge de qualité de la barre de lecture.
 
-## Sources et comptes
-
-Réglages des comptes : page de chaque source (barre latérale). Les jetons sont stockés dans `accounts.json` du
-dossier utilisateur (droits 600 sous macOS / Linux).
+## Sources
 
 | Source | Accès | Moteur bit-perfect |
 |---|---|---|
 | Fichiers locaux, SMB / NFS montés | dossiers surveillés (mtime des dossiers, scan complet toutes les 10 min) | oui |
-| NAS UPnP / DLNA | découverte SSDP, Browse / Search ContentDirectory, import d'un dossier | oui (flux HTTP) |
-| Qobuz | API partenaire : `app_id` / `app_secret` délivrés par Qobuz, puis e-mail / mot de passe | oui, FLAC jusqu'à 24 / 192 |
-| Tidal | `client_id` délivré par Tidal, connexion par code sur link.tidal.com | oui : FLAC (BTS) et FLAC Max (DASH fMP4 reconditionné en FLAC) ; les flux chiffrés sont refusés |
-| Spotify | votre `client_id` (developer.spotify.com, redirection `http://127.0.0.1:43821/callback`), PKCE | non : lecture confiée à Spotify Connect |
-| YouTube Music | clé d'API YouTube Data v3, playlists publiques par identifiant | non : lecture sur music.youtube.com |
+| NAS UPnP / DLNA | découverte SSDP au lancement (M-SEARCH MediaServer + ContentDirectory, répétée, et écoute des annonces), serveurs mémorisés d'une session à l'autre, ou adresse IP du NAS (M-SEARCH unicast, utile si le réseau filtre le multicast) ; dossiers en grille avec pochettes, « Lire ce dossier », import dans la bibliothèque | oui (flux HTTP, reprise par Range) |
 
-NX Player n'extrait aucun identifiant des applications des services et ne contourne aucune protection : Spotify
-et YouTube ne délivrent pas de flux audio aux applications tierces, et leurs conditions interdisent de capter
-l'audio. Les endpoints Qobuz et Tidal sont ceux de leurs programmes partenaires ; ils peuvent évoluer.
+Testé avec un faux serveur qui se comporte comme les vrais (pages plafonnées, plusieurs `<res>`, erreurs SOAP).
+Serveurs visés : MinimServer, Asset UPnP, Synology Media Server, QNAP, JRiver, Jellyfin, foobar2000. Sous macOS,
+le système demande l'autorisation « Réseau local » au premier lancement : acceptez-la, sinon aucun serveur n'apparaît.
+
+Les connecteurs de streaming restent dans le code (`Source/Providers/StreamingProviders.*`, tests 205 et 207) ;
+avec `-DNX_ENABLE_STREAMING=ON` ils reviennent dans la barre latérale. NX Player n'extrait aucun identifiant des
+applications des services et ne contourne aucune protection.
 
 Paroles : fichier `.lrc` à côté du morceau, puis tags (USLT, LYRICS), puis LRCLIB (désactivable dans les réglages).
 
-### Identifiants intégrés (connexion en un clic)
-
-Les identifiants d'application peuvent être compilés dans NX Player : l'utilisateur n'a plus qu'à se connecter avec
-son compte (navigateur pour Spotify, e-mail + mot de passe pour Qobuz, code pour Tidal) et les champs techniques
-disparaissent. Options CMake ou variables d'environnement : `NX_SPOTIFY_CLIENT_ID`, `NX_QOBUZ_APP_ID`,
-`NX_QOBUZ_APP_SECRET`, `NX_TIDAL_CLIENT_ID`, `NX_TIDAL_CLIENT_SECRET`. Dans GitHub Actions, créez des secrets du
-même nom (Settings › Secrets and variables › Actions) : la CI les intègre aux applications compilées.
-
-Spotify : créez une application sur developer.spotify.com (Web API), ajoutez l'adresse de redirection
-`http://127.0.0.1:43821/callback` et copiez son Client ID. Pas de secret : la connexion utilise PKCE.
+Identifiants des services (si le streaming est réactivé) : options CMake ou secrets GitHub `NX_SPOTIFY_CLIENT_ID`,
+`NX_QOBUZ_APP_ID`, `NX_QOBUZ_APP_SECRET`, `NX_TIDAL_CLIENT_ID`, `NX_TIDAL_CLIENT_SECRET`.
 
 ## Utilisation
 
@@ -145,9 +141,18 @@ Spotify : créez une application sur developer.spotify.com (Web API), ajoutez l'
 | Rechercher | Cmd/Ctrl + F |
 | Paroles | Cmd/Ctrl + L |
 | Mini-lecteur | Cmd/Ctrl + M |
+| Page précédente / suivante (‹ ›) | Cmd/Ctrl + [ / ], ou Alt + ← / → |
+| Masquer / afficher la barre latérale | Cmd/Ctrl + B |
 
 Volume : à 100 % le flux reste bit-perfect ; en dessous, volume numérique 64 bits + dither. Double-clic sur un
 morceau pour le lire, clic droit pour la file d'attente, l'album, l'artiste, les crédits.
+
+**Extensions & Thèmes** (barre latérale › Personnaliser) : chaque thème et chaque plug-in est une carte avec un
+aperçu en direct ; un clic sur l'interrupteur l'active ou le désactive, un clic sur un thème l'applique.
+**Plugins utilisateur** : le *Catalogue* propose des plug-ins en plus livrés avec NX Player (Oscilloscope,
+Spectre circulaire, Spectrogramme, Crêtes-mètre numérique, Horloge & session d'écoute, DSP Tonalité & balance) ;
+« Installer » les copie dans votre dossier et les active. *Installés* liste vos plug-ins, avec « Importer un plugin… »
+(dossier ou .zip) et l'ouverture du dossier.
 
 Thèmes : `docs/THEMES.md`. Plug-ins : `docs/PLUGINS.md`.
 
@@ -159,9 +164,11 @@ Thèmes : `docs/THEMES.md`. Plug-ins : `docs/PLUGINS.md`.
   (RME ADI-2, Merging) reste à faire.
 - **DSD** : DST (DFF compressé) non pris en charge. Le DoP suppose un DAC qui reconnaît les marqueurs.
 - **Formats** : AAC seulement sous macOS (décodeur système) ; pas de WavPack, APE, MQA.
-- **Streaming** : Qobuz et Tidal demandent des identifiants partenaires que ce dépôt ne fournit pas ; ces
-  connecteurs n'ont été testés que sur des réponses enregistrées (JSON, MPD, fMP4). Seek dans un flux HTTP : attend
-  que l'octet visé soit téléchargé.
+- **Streaming** : retiré de l'interface pour l'instant. Qobuz et Tidal demandent un accès partenaire (la clé
+  « Third party » de Tidal ne donne que des extraits de 30 s) ; Spotify ne délivre pas de flux audio aux applications
+  tierces.
+- **NAS** : seek dans un flux HTTP : attend que l'octet visé soit téléchargé. La découverte multicast n'est pas
+  testable en CI (le test utilise le M-SEARCH unicast) ; essai réel avec un NAS à faire.
 - **Shaders GLSL** : rendu OpenGL non testé sur ce banc (pas de GPU) ; le dégradé de repli l'est.
 - **Interface** : rendue hors écran et lancée sous X virtuel ; une séance d'utilisation réelle reste à faire.
   Pas de bord de fenêtre personnalisé (barre de titre native).

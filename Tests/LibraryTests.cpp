@@ -12,6 +12,7 @@
 #include "../Source/Providers/Http.h"
 #include "../Source/Output/CaptureBackend.h"
 #include <future>
+#include "FakeUpnp.h"
 
 using namespace nxtest;
 
@@ -599,4 +600,97 @@ NX_TEST_SECTION (207, "OAuth : serveur de retour local (préconnexion, favicon, 
     const auto code = loop.waitForCode (10000, err);
     t.check (code == "AbC123", "code reçu malgré la préconnexion et /favicon.ico ("_t + code + (err.isNotEmpty() ? ", " + err : juce::String()) + ")");
     t.check (browser.get(), "le navigateur reçoit une page de confirmation"_t);
+}
+
+//==============================================================================
+NX_TEST_SECTION (208, "NAS UPnP / DLNA de bout en bout : découverte, navigation paginée, import, lecture bit-perfect")
+{
+    auto media = t.tempDir.getChildFile ("nas208");
+    media.createDirectory();
+    const auto pcm = randomPcm (9600, 2, 24, 208);
+    writeWav (media.getChildFile ("a1.wav"), &pcm, nullptr, 2, 96000.0, 24, 24, false);
+    for (int i = 2; i <= 5; ++i) writeWav (media.getChildFile ("a" + juce::String (i) + ".wav"), &pcm, nullptr, 2, 96000.0, 24, 24, false);
+
+    FakeUpnpServer nas (media);
+    using N = FakeUpnpServer::Node;
+    auto item = [] (juce::String id, juce::String parent, juce::String title, juce::String file)
+    {
+        N n; n.id = id; n.parent = parent; n.title = title; n.artist = "Zeyn"; n.album = "Neon Roads"; n.file = file; n.rate = 96000; n.bits = 24;
+        return n;
+    };
+    N albums; albums.id = "albums"; albums.parent = "0"; albums.title = "Albums"; albums.container = true; nas.add (albums);
+    N all; all.id = "all"; all.parent = "0"; all.title = "Tous les morceaux"; all.container = true; nas.add (all);
+    N a1; a1.id = "alb1"; a1.parent = "albums"; a1.title = "Neon Roads"; a1.artist = "Zeyn"; a1.container = true; nas.add (a1);
+    N a2; a2.id = "alb2"; a2.parent = "albums"; a2.title = "Glass Hours"; a2.artist = "Nora Vale"; a2.container = true; nas.add (a2);
+    for (int i = 1; i <= 3; ++i) nas.add (item ("t" + juce::String (i), "alb1", "Piste " + juce::String (i), "a" + juce::String (i) + ".wav"));
+    for (int i = 4; i <= 5; ++i) nas.add (item ("t" + juce::String (i), "alb2", "Piste " + juce::String (i), "a" + juce::String (i) + ".wav"));
+    for (int i = 1; i <= 5; ++i) nas.add (item ("all" + juce::String (i), "all", "Piste " + juce::String (i), "a" + juce::String (i) + ".wav"));
+
+    // SSDP parsing: an ssdp:alive NOTIFY from a media server counts, a byebye or a renderer does not.
+    const juce::String alive = "NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nNT: urn:schemas-upnp-org:device:MediaServer:1\r\n"
+                               "NTS: ssdp:alive\r\nLOCATION: http://10.0.0.2:9790/desc.xml\r\n\r\n";
+    t.check (nx::UpnpProvider::isMediaServerAnnouncement (alive)
+             && ! nx::UpnpProvider::isMediaServerAnnouncement (alive.replace ("ssdp:alive", "ssdp:byebye"))
+             && ! nx::UpnpProvider::isMediaServerAnnouncement (alive.replace ("MediaServer", "MediaRenderer")),
+             "SSDP : annonces NOTIFY (alive / byebye / renderer) triées"_t);
+
+    nx::UpnpProvider upnp;
+    const auto found = upnp.discoverHost ("127.0.0.1", nas.udpPort, 3000);
+    t.check (found.size() == 1 && found[0].name == "NAS de test" && nas.searchAnswers.load() > 0,
+             "découverte par M-SEARCH unicast : « "_t + (found.empty() ? juce::String ("aucun") : found[0].name) + " »"_t
+             + (found.empty() ? " " + upnp.lastError : juce::String()));
+    if (found.empty()) return;
+    const auto server = found[0];
+    t.check (server.controlUrl == nas.base() + "/ctl" && server.iconUrl == nas.base() + "/art/icon.jpg",
+             "URL de contrôle et icône résolues : "_t + server.controlUrl);
+
+    nas.browseRequests = 0;
+    const auto everything = upnp.browseAll (server, "all");
+    t.check (everything.size() == 5 && nas.browseRequests.load() == 3,
+             "Browse paginé (le serveur plafonne à 2 par page) : "_t + juce::String ((int) everything.size()) + " morceaux en "
+             + juce::String (nas.browseRequests.load()) + " requêtes"_t);
+    t.check (! everything.empty() && everything[0].track.codec == "WAV" && ! everything[0].track.lossy && everything[0].track.sampleRate == 96000.0
+             && everything[0].track.uri.endsWith ("/media/a1.wav"),
+             "meilleure ressource choisie (WAV 24/96 plutôt que MP3)"_t);
+
+    const auto folders = upnp.browseAll (server, "albums");
+    t.check (folders.size() == 2 && folders[0].isContainer && folders[0].childCount == 3 && folders[0].track.artist == "Zeyn",
+             "dossiers d'albums : nombre d'éléments et artiste"_t);
+
+    const auto ordered = upnp.collectTracks (server, "albums");
+    t.check (ordered.size() == 5 && ordered.front().title == "Piste 1" && ordered.back().title == "Piste 5",
+             "« Lire ce dossier » : sous-dossiers parcourus dans l'ordre du serveur ("_t + juce::String ((int) ordered.size()) + " morceaux)");
+
+    const bool faultEmpty = upnp.browseAll (server, "inexistant").empty();
+    t.check (faultEmpty && upnp.lastError.contains ("No such object"), "erreur SOAP du serveur remontée : "_t + upnp.lastError);
+
+    nx::Library lib;
+    juce::String err;
+    lib.openInMemory (t.tempDir.getChildFile ("art208"), err);
+    const int n = upnp.importContainer (lib, server, "albums");
+    t.check (n == 5 && lib.countTracks() == 5, "import du dossier dans la bibliothèque : "_t + juce::String (n) + " morceaux");
+
+    // Play the first track through the whole chain: library row -> provider -> HTTP -> engine -> virtual DAC.
+    nx::CredentialStore creds (t.tempDir.getChildFile ("accounts208.json"));
+    nx::UnifiedMediaProvider unified (lib, creds);
+    unified.addProvider (std::make_unique<nx::UpnpProvider>());
+    auto cap = std::make_unique<nx::CaptureBackend>();
+    auto* capture = cap.get();
+    nx::PlaybackEngine engine (std::move (cap));
+    engine.streamResolver = [&unified] (const nx::PlayableItem& i) { return unified.openStream (i); };
+    engine.setQueue ({ unified.toPlayable (ordered.front()) }, 0, true);
+    const auto t0 = juce::Time::getMillisecondCounter();
+    int blocks = 0;
+    while (juce::Time::getMillisecondCounter() - t0 < 20000)
+    {
+        engine.serviceMessageThread();
+        if (engine.getState() == nx::PlaybackEngine::State::Stopped && blocks > 0) break;
+        if (! capture->isRunning()) { juce::Thread::sleep (2); continue; }
+        for (int w = 0; w < 3000 && engine.isDecoderBusy() && engine.getBufferedBytes() < (1u << 18); ++w) juce::Thread::sleep (1);
+        capture->pump (1024);
+        ++blocks;
+    }
+    const auto& got = capture->capturedInt;
+    t.check (got.size() >= pcm.size() && std::equal (pcm.begin(), pcm.end(), got.begin()) && capture->config.sampleRate == 96000.0,
+             "lecture depuis le NAS -> DAC 96 kHz : bit-perfect"_t);
 }

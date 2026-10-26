@@ -58,8 +58,13 @@ public:
 
     /** Message thread: state shared with every script (nx.player, nx.audio, nx.theme...). */
     void setState (const juce::String& key, const juce::var& value);
-    /** Runs render(g, w, h, nx, slot) of a plug-in into g. Returns false (and shows the error) on failure. */
-    bool render (const juce::String& id, const juce::String& slot, juce::Graphics& g, juce::Rectangle<float> area);
+    /** Runs render(g, w, h, nx, slot) of a plug-in into g. Returns false (and shows the error) on failure.
+        preview: also for a disabled plug-in, in its own script instance (gallery cards). */
+    bool render (const juce::String& id, const juce::String& slot, juce::Graphics& g, juce::Rectangle<float> area, bool preview = false);
+    /** Scripts of this manager see the same nx.* state as another one (catalogue previews). */
+    void shareStateWith (const PluginManager& other) { state = other.state; ownsSharedObjects = false; }
+    /** Where a plug-in lives: bundled (next to the app) or installed by the user. */
+    juce::File getPluginFolder (const juce::String& id) const;
 
     /** nx.ui.setLayout({...}) from a script, or a manifest "layout". */
     std::function<void (const juce::var& layout)> onLayoutRequest;
@@ -88,7 +93,9 @@ private:
     std::map<juce::String, juce::int64> fingerprints;
     std::map<juce::String, std::vector<double>> dspValues;
     std::map<juce::String, std::unique_ptr<juce::DynamicLibrary>> libraries;
+    std::vector<std::unique_ptr<juce::DynamicLibrary>> retiredLibraries;
     juce::DynamicObject::Ptr state;
+    bool ownsSharedObjects = true;   // false: nx.ui / nx.console belong to the manager we share state with
     std::shared_ptr<int> alive = std::make_shared<int> (0);
 };
 
