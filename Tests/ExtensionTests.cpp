@@ -11,6 +11,7 @@
 #include "../Source/GUI/MainComponent.h"
 #include "../Source/GUI/Windows.h"
 #include "../Source/Output/CaptureBackend.h"
+#include "../Source/Platform/MediaControls.h"
 
 using namespace nxtest;
 
@@ -453,4 +454,6 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
     savePng (miniImg, shots.getChildFile ("11_mini_lecteur.png"));
     t.check (colourVariety (miniImg) > 20, "mini-lecteur");
     t.info ("captures : " + shots.getFullPathName());
+    t.check (juce::String (nx::MediaControls::compiledBackend()).isNotEmpty(),
+             "touches multimédia du système : "_t + juce::String::fromUTF8 (nx::MediaControls::compiledBackend()));
 }

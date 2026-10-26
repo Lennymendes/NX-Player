@@ -154,6 +154,7 @@ std::unique_ptr<MediaControls> MediaControls::create (Callbacks callbacks, void*
     return std::make_unique<NoMediaControls>();
 }
 
+const char* MediaControls::compiledBackend() { return "SystemMediaTransportControls (C++/WinRT)"; }
 } // namespace nx
 
 #else
@@ -169,6 +170,7 @@ namespace
     };
 }
 std::unique_ptr<MediaControls> MediaControls::create (Callbacks, void*) { return std::make_unique<NoMediaControls>(); }
+const char* MediaControls::compiledBackend() { return "aucune (C++/WinRT absent)"; }
 } // namespace nx
 
 #endif

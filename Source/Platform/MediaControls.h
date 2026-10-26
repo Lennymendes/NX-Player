@@ -37,6 +37,8 @@ public:
 
     /** Callbacks are called on the message thread. nativeWindow: the main window's handle (HWND on Windows). */
     static std::unique_ptr<MediaControls> create (Callbacks callbacks, void* nativeWindow);
+    /** The system API compiled into this build. */
+    static const char* compiledBackend();
 };
 
 } // namespace nx

@@ -15,5 +15,6 @@ namespace
 }
 
 std::unique_ptr<MediaControls> MediaControls::create (Callbacks, void*) { return std::make_unique<NoMediaControls>(); }
+const char* MediaControls::compiledBackend() { return "aucune (Linux)"; }
 } // namespace nx
 #endif

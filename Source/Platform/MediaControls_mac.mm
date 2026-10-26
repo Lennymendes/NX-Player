@@ -118,4 +118,5 @@ std::unique_ptr<MediaControls> MediaControls::create (Callbacks callbacks, void*
     return std::make_unique<MacMediaControls> (std::move (callbacks));
 }
 
+const char* MediaControls::compiledBackend() { return "MPRemoteCommandCenter + MPNowPlayingInfoCenter"; }
 } // namespace nx
