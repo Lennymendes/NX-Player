@@ -270,8 +270,8 @@ Thèmes : `docs/THEMES.md`. Plug-ins : `docs/PLUGINS.md`.
   testable en CI (le test utilise le M-SEARCH unicast) ; essai réel avec un NAS à faire.
 - **Shaders GLSL** : rendu OpenGL non testé sur ce banc (pas de GPU) ; le dégradé de repli l'est.
 - **Interface** : rendue hors écran et lancée sous X virtuel ; une séance d'utilisation réelle reste à faire.
-- **v1.0** : le tableau de bord, l'anti-veille et NX Remote n'ont été exécutés que sous Linux (les versions macOS et
-  Windows sont compilées par la CI). L'anti-veille n'existe pas sous Linux. Les infos d'artistes demandent un accès à
+- **v1.0** : NX Remote et les mesures du tableau de bord passent le banc d'essai sur les trois systèmes (CI) ;
+  l'anti-veille (macOS, Windows) n'est pas testée automatiquement et n'existe pas sous Linux. Les infos d'artistes demandent un accès à
   TheAudioDB / Wikipédia (testées sur un faux serveur). L'anglais couvre l'interface ; quelques messages d'erreur
   internes restent en français. Le pont AuraEngine X ouvre les fichiers dans l'application (pas d'options de
   conversion transmises en ligne de commande).
