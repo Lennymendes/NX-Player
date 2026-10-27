@@ -16,9 +16,15 @@ class AudioAnalyzer;
 class ArtworkCache;
 class LibraryScanner;
 class DownloadManager;
+class ArtistInfoService;
+class RemoteServer;
+struct StudioToolsState;
 
 enum class PageId { Home, Search, RecentlyAdded, Albums, AlbumDetail, Artists, ArtistDetail, Songs, Playlists, PlaylistDetail,
-                    Source, NowPlaying, Settings, Marketplace, UserPlugins };
+                    Source, NowPlaying, Settings, Marketplace, UserPlugins,
+                    Library,        // a = pill: albums | artistes | pistes | genres | recents | dxd | dsd | hires | cd
+                    Genre,          // a = genre
+                    Favourites };
 
 struct PageRequest
 {
@@ -54,6 +60,9 @@ public:
     virtual LibraryScanner& scanner() = 0;
     virtual AppSettings& settings() = 0;
     virtual DownloadManager& downloads() = 0;
+    virtual ArtistInfoService& artistInfo() = 0;
+    virtual RemoteServer& remote() = 0;
+    virtual StudioToolsState& studioTools() = 0;
 
     const Theme& theme() { return themes().current(); }
 
@@ -79,6 +88,26 @@ public:
     virtual juce::File resourcesDirectory() = 0;
     /** Remembers the NAS servers found so far (they reconnect at the next launch without discovery). */
     virtual void saveNasServers() = 0;
+
+    /** Studio tools changed: rebuilds the DSP chain (DSD is converted to PCM while a tool is on). */
+    virtual void applyStudioTools() = 0;
+    /** Volume of the player bar, 0..1 (1 = 100 % = bit-perfect). */
+    virtual void setUserVolume (double v) = 0;
+    virtual double getUserVolume() = 0;
+    /** NX Remote on / off (QR code in the settings and the top bar). */
+    virtual bool setRemoteEnabled (bool on) = 0;
+    /** Interface language ("fr" / "en"): rebuilds the visible texts. */
+    virtual void setLanguage (const juce::String& code) = 0;
+    /** Layout presets of the onboarding / settings: sidebar "wide" | "compact", player "bottom" | "top". */
+    virtual void setLayoutOption (const juce::String& key, const juce::var& value) = 0;
+    virtual bool isSleepBlocked() = 0;
+    /** First-run assistant (also from Réglages › Interface). */
+    virtual void showOnboarding() = 0;
+    virtual void setImmersive (bool on) = 0;
+    /** Analyse / convert in AuraEngine X (local files). */
+    virtual void sendToAuraEngine (const std::vector<TrackInfo>& tracks) = 0;
+    /** "NAS", "Jellyfin" or the server name for a track / album source ("upnp:<udn>"); empty for local files. */
+    virtual juce::String networkSourceLabel (const juce::String& source) = 0;
 
     /** The blurred artwork behind the window (for glass panels), in main-window coordinates. */
     virtual const juce::Image& backdrop() = 0;

@@ -80,6 +80,30 @@ Seules les propriétés personnalisées sont lues : `--nom: valeur;` dans n'impo
 | `--nx-lyrics-size` | taille des paroles | `30px` |
 | `--nx-animation-speed` | vitesse des animations (1 = normale) | `1.0` |
 
+## Vue immersive (`immersive.json` et variables)
+
+La vue immersive (bouton plein écran de la barre de lecture, touche F) se compose de widgets que le thème peut
+afficher, masquer et disposer. Deux façons, cumulables (`immersive.json` l'emporte sur le CSS) :
+
+```css
+:root {
+  --nx-immersive-layout: centered;      /* split (pochette + paroles) | centered | minimal */
+  --nx-immersive-lyrics: on;            /* on / off pour lyrics, waveform, vu, spectrum, tech */
+  --nx-immersive-vu: on;
+  --nx-immersive-artwork-scale: 0.9;    /* 0,5 … 1,4 */
+  --nx-immersive-motion: 1.2;           /* vitesse du fond animé, 0 = immobile */
+  --nx-immersive-blur: 0.8;             /* part de la pochette floutée dans le champ de couleurs */
+}
+```
+
+```json
+{ "layout": "split", "lyrics": true, "waveform": true, "vu": false, "spectrum": true, "tech": true, "motion": 1.5 }
+```
+
+Ordre de priorité : valeurs par défaut, puis le thème, puis les réglages de l'utilisateur (menu ⊞ de la vue immersive
+ou Réglages › Interface), puis les plug-ins (`nx.ui.setLayout({ immersive: {...} })`). Le menu de la vue propose
+« Exporter la disposition (immersive.json) » : déposez le fichier dans le dossier d'un thème pour la partager.
+
 ## Shader d'arrière-plan (builds OpenGL : macOS, Windows, Linux avec OpenGL)
 
 Fragment shader GLSL inséré par JUCE (`OpenGLGraphicsContextCustomShader`) : `pixelPos` (coordonnées en pixels)

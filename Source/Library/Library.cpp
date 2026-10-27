@@ -87,6 +87,10 @@ bool Library::createSchema (juce::String& error)
                                                    position INTEGER, track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS offline (local_path TEXT PRIMARY KEY, origin_source TEXT, origin_id TEXT, origin_uri TEXT, added INTEGER);
+        CREATE TABLE IF NOT EXISTS album_favorites (artist TEXT, album TEXT, added INTEGER, PRIMARY KEY (artist, album));
+        CREATE TABLE IF NOT EXISTS artist_meta (name TEXT PRIMARY KEY COLLATE NOCASE, image TEXT, banner TEXT, bio TEXT, bio_source TEXT,
+                                                country TEXT, genre TEXT, found INTEGER DEFAULT 0, fetched INTEGER DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_tracks_source ON tracks (source);
         INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', '1');
     )SQL";
     if (! db.exec (schema)) { error = db.lastError(); return false; }
@@ -287,30 +291,224 @@ int Library::countTracks (const juce::String& sourceFilter)
     return s.step() ? s.getInt (0) : 0;
 }
 
-std::vector<AlbumInfo> Library::getAlbums (const juce::String& orderBy, int limit, const juce::String& sourceFilter)
+namespace
 {
-    std::lock_guard<std::recursive_mutex> l (db.getMutex());
-    juce::String sql = R"SQL(
+    const char* albumColumns()
+    {
+        return R"SQL(
         SELECT album, COALESCE(NULLIF(album_artist, ''), artist) AS a, MAX(year), COUNT(*), MAX(sample_rate), MAX(bits),
-               MAX(is_dsd), MIN(lossy), SUM(duration), MAX(added), MAX(artwork), MIN(source)
-        FROM tracks WHERE album IS NOT NULL AND album != '')SQL";
-    if (sourceFilter.isNotEmpty()) sql << " AND source LIKE ?2";
-    sql << " GROUP BY a, album ORDER BY ";
-    sql << (orderBy == "added" ? "MAX(added) DESC" : orderBy == "artist" ? "a COLLATE NOCASE, MAX(year)" : orderBy == "year" ? "MAX(year) DESC" : "album COLLATE NOCASE");
-    sql << " LIMIT ?1";
-    SqliteStatement s (db, sql.toRawUTF8());
-    s.bind (1, limit);
-    if (sourceFilter.isNotEmpty()) s.bind (2, sourceFilter + "%");
-    std::vector<AlbumInfo> out;
-    while (s.step())
+               MAX(is_dsd), MIN(lossy), SUM(duration), MAX(added), MAX(artwork), MIN(source),
+               MAX(CASE WHEN source LIKE 'upnp%' THEN source END), MAX(genre)
+        FROM tracks)SQL";
+    }
+
+    AlbumInfo rowToAlbum (SqliteStatement& s)
     {
         AlbumInfo a;
         a.title = s.getText (0); a.artist = s.getText (1); a.year = s.getInt (2); a.trackCount = s.getInt (3);
         a.maxRate = s.getDouble (4); a.maxBits = s.getInt (5); a.hasDsd = s.getInt (6) != 0; a.lossy = s.getInt (7) != 0;
         a.duration = s.getDouble (8); a.added = s.getInt64 (9); a.artworkKey = s.getText (10); a.source = s.getText (11);
-        out.push_back (a);
+        a.nasSource = s.getText (12); a.genre = s.getText (13);
+        return a;
     }
+
+    juce::String albumOrder (const juce::String& orderBy)
+    {
+        return orderBy == "added" ? "MAX(added) DESC" : orderBy == "artist" ? "a COLLATE NOCASE, MAX(year)" : orderBy == "year" ? "MAX(year) DESC" : "album COLLATE NOCASE";
+    }
+}
+
+std::vector<AlbumInfo> Library::getAlbums (const juce::String& orderBy, int limit, const juce::String& sourceFilter)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    juce::String sql = albumColumns();
+    sql << " WHERE album IS NOT NULL AND album != ''";
+    if (sourceFilter.isNotEmpty()) sql << " AND source LIKE ?2";
+    sql << " GROUP BY a, album ORDER BY " << albumOrder (orderBy) << " LIMIT ?1";
+    SqliteStatement s (db, sql.toRawUTF8());
+    s.bind (1, limit);
+    if (sourceFilter.isNotEmpty()) s.bind (2, sourceFilter + "%");
+    std::vector<AlbumInfo> out;
+    while (s.step()) out.push_back (rowToAlbum (s));
     return out;
+}
+
+juce::String Library::qualityCondition (QualityFilter q)
+{
+    switch (q)
+    {
+        case QualityFilter::Dxd:   return "(is_dsd = 0 AND lossy = 0 AND sample_rate >= 352000)";
+        case QualityFilter::Dsd:   return "(is_dsd = 1)";
+        case QualityFilter::HiRes: return "(is_dsd = 0 AND lossy = 0 AND (sample_rate > 48000 OR bits > 16))";
+        case QualityFilter::Cd:    return "(is_dsd = 0 AND lossy = 0 AND sample_rate > 0 AND sample_rate <= 48000 AND bits <= 16)";
+        case QualityFilter::Any:   break;
+    }
+    return "1";
+}
+
+std::vector<AlbumInfo> Library::getAlbumsFiltered (QualityFilter q, const juce::String& genre, const juce::String& orderBy, int limit)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    juce::String sql = albumColumns();
+    sql << " WHERE album IS NOT NULL AND album != '' AND " << qualityCondition (q);
+    if (genre.isNotEmpty()) sql << " AND genre = ?2";
+    sql << " GROUP BY a, album ORDER BY " << albumOrder (orderBy) << " LIMIT ?1";
+    SqliteStatement s (db, sql.toRawUTF8());
+    s.bind (1, limit);
+    if (genre.isNotEmpty()) s.bind (2, genre);
+    std::vector<AlbumInfo> out;
+    while (s.step()) out.push_back (rowToAlbum (s));
+    return out;
+}
+
+std::vector<TrackInfo> Library::getTracksFiltered (QualityFilter q, const juce::String& genre, int limit)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    juce::String sql = juce::String ("SELECT ") + trackColumns() + " FROM tracks WHERE " + qualityCondition (q);
+    if (genre.isNotEmpty()) sql << " AND genre = ?2";
+    sql << " ORDER BY " << orderClause ("artist") << " LIMIT ?1";
+    SqliteStatement s (db, sql.toRawUTF8());
+    s.bind (1, limit);
+    if (genre.isNotEmpty()) s.bind (2, genre);
+    std::vector<TrackInfo> out;
+    while (s.step()) out.push_back (rowToTrack (s));
+    return out;
+}
+
+int Library::countTracksFiltered (QualityFilter q)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, ("SELECT COUNT(*) FROM tracks WHERE " + qualityCondition (q)).toRawUTF8());
+    return s.step() ? s.getInt (0) : 0;
+}
+
+std::vector<GenreInfo> Library::getGenres()
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, R"SQL(
+        SELECT genre, COUNT(DISTINCT COALESCE(NULLIF(album_artist, ''), artist) || char(31) || album), COUNT(*), MAX(artwork)
+        FROM tracks WHERE genre IS NOT NULL AND genre != '' GROUP BY genre ORDER BY genre COLLATE NOCASE)SQL");
+    std::vector<GenreInfo> out;
+    while (s.step()) out.push_back ({ s.getText (0), s.getInt (1), s.getInt (2), s.getText (3) });
+    return out;
+}
+
+std::vector<TrackInfo> Library::getFavouriteTracks()
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, (juce::String ("SELECT ") + trackColumns() + " FROM tracks WHERE favorite = 1 ORDER BY " + orderClause ("artist")).toRawUTF8());
+    std::vector<TrackInfo> out;
+    while (s.step()) out.push_back (rowToTrack (s));
+    return out;
+}
+
+std::vector<AlbumInfo> Library::getFavouriteAlbums()
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    juce::String sql = albumColumns();
+    sql << " WHERE album IS NOT NULL AND album != '' AND EXISTS (SELECT 1 FROM album_favorites f WHERE f.album = tracks.album"
+           " AND f.artist = COALESCE(NULLIF(tracks.album_artist, ''), tracks.artist))"
+           " GROUP BY a, album ORDER BY a COLLATE NOCASE, MAX(year)";
+    SqliteStatement s (db, sql.toRawUTF8());
+    std::vector<AlbumInfo> out;
+    while (s.step()) { out.push_back (rowToAlbum (s)); out.back().favourite = true; }
+    return out;
+}
+
+void Library::setAlbumFavourite (const juce::String& artist, const juce::String& album, bool fav)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    if (fav)
+    {
+        SqliteStatement s (db, "INSERT OR IGNORE INTO album_favorites (artist, album, added) VALUES (?1, ?2, ?3)");
+        s.bind (1, artist).bind (2, album).bind (3, (juce::int64) juce::Time::currentTimeMillis()).execute();
+    }
+    else
+    {
+        SqliteStatement s (db, "DELETE FROM album_favorites WHERE artist = ?1 AND album = ?2");
+        s.bind (1, artist).bind (2, album).execute();
+    }
+}
+
+bool Library::isAlbumFavourite (const juce::String& artist, const juce::String& album)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "SELECT 1 FROM album_favorites WHERE artist = ?1 AND album = ?2");
+    s.bind (1, artist).bind (2, album);
+    return s.step();
+}
+
+int Library::removeAlbum (const juce::String& artist, const juce::String& album, const juce::String& sourcePrefix)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    juce::String sql = "DELETE FROM tracks WHERE album = ?1 AND COALESCE(NULLIF(album_artist, ''), artist) = ?2";
+    if (sourcePrefix.isNotEmpty()) sql << " AND source LIKE ?3";
+    SqliteStatement s (db, sql.toRawUTF8());
+    s.bind (1, album).bind (2, artist);
+    if (sourcePrefix.isNotEmpty()) s.bind (3, sourcePrefix + "%");
+    s.execute();
+    return db.changes();
+}
+
+int Library::removeSourcePrefix (const juce::String& prefix)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "DELETE FROM tracks WHERE source LIKE ?1");
+    s.bind (1, prefix + "%").execute();
+    return db.changes();
+}
+
+juce::StringArray Library::getSources (const juce::String& prefix)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "SELECT DISTINCT source FROM tracks WHERE source LIKE ?1 ORDER BY source");
+    s.bind (1, prefix + "%");
+    juce::StringArray out;
+    while (s.step()) out.add (s.getText (0));
+    return out;
+}
+
+int Library::removeNasSourcesExcept (const juce::StringArray& available)
+{
+    int removed = 0;
+    for (auto& src : getSources ("upnp"))
+        if (! available.contains (src))
+        {
+            std::lock_guard<std::recursive_mutex> l (db.getMutex());
+            SqliteStatement s (db, "DELETE FROM tracks WHERE source = ?1");
+            s.bind (1, src).execute();
+            removed += db.changes();
+        }
+    return removed;
+}
+
+int Library::countAlbumsFromSourcePrefix (const juce::String& prefix)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "SELECT COUNT(DISTINCT COALESCE(NULLIF(album_artist, ''), artist) || char(31) || album) FROM tracks WHERE source LIKE ?1");
+    s.bind (1, prefix + "%");
+    return s.step() ? s.getInt (0) : 0;
+}
+
+std::optional<ArtistMeta> Library::getArtistMeta (const juce::String& name)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "SELECT name, image, banner, bio, bio_source, country, genre, found, fetched FROM artist_meta WHERE name = ?1");
+    s.bind (1, name);
+    if (! s.step()) return std::nullopt;
+    ArtistMeta m;
+    m.name = s.getText (0); m.imageUrl = s.getText (1); m.bannerUrl = s.getText (2); m.bio = s.getText (3);
+    m.bioSource = s.getText (4); m.country = s.getText (5); m.genre = s.getText (6); m.found = s.getInt (7) != 0; m.fetched = s.getInt64 (8);
+    return m;
+}
+
+void Library::setArtistMeta (const ArtistMeta& m)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "INSERT OR REPLACE INTO artist_meta (name, image, banner, bio, bio_source, country, genre, found, fetched) "
+                           "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)");
+    s.bind (1, m.name).bind (2, m.imageUrl).bind (3, m.bannerUrl).bind (4, m.bio).bind (5, m.bioSource).bind (6, m.country)
+     .bind (7, m.genre).bind (8, m.found ? 1 : 0).bind (9, m.fetched > 0 ? m.fetched : (juce::int64) juce::Time::currentTimeMillis()).execute();
 }
 
 std::vector<ArtistInfo> Library::getArtists (int limit)
@@ -375,6 +573,53 @@ std::vector<TrackInfo> Library::getPlaylistTracks (juce::int64 playlistId)
     std::vector<TrackInfo> out;
     while (s.step()) out.push_back (rowToTrack (s));
     return out;
+}
+
+int Library::appendToPlaylist (juce::int64 playlistId, const std::vector<juce::int64>& trackIds)
+{
+    SqliteDb::Transaction tx (db);
+    int position = 0;
+    {
+        SqliteStatement p (db, "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = ?1");
+        p.bind (1, playlistId);
+        if (p.step()) position = p.getInt (0);
+    }
+    SqliteStatement s (db, "INSERT INTO playlist_items (playlist_id, position, track_id) VALUES (?1, ?2, ?3)");
+    int added = 0;
+    for (auto id : trackIds)
+    {
+        if (id <= 0) continue;
+        s.reset();
+        s.bind (1, playlistId).bind (2, position++).bind (3, id).execute();
+        ++added;
+    }
+    tx.commit();
+    return added;
+}
+
+void Library::removeFromPlaylist (juce::int64 playlistId, int position)
+{
+    auto tracks = getPlaylistTracks (playlistId);
+    if (position < 0 || position >= (int) tracks.size()) return;
+    std::vector<juce::int64> ids;
+    for (int i = 0; i < (int) tracks.size(); ++i) if (i != position) ids.push_back (tracks[(size_t) i].id);
+    setPlaylistTracks (playlistId, ids);
+}
+
+void Library::deletePlaylist (juce::int64 playlistId)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement d (db, "DELETE FROM playlist_items WHERE playlist_id = ?1");
+    d.bind (1, playlistId).execute();
+    SqliteStatement s (db, "DELETE FROM playlists WHERE id = ?1");
+    s.bind (1, playlistId).execute();
+}
+
+void Library::renamePlaylist (juce::int64 playlistId, const juce::String& name)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "UPDATE playlists SET name = ?2 WHERE id = ?1");
+    s.bind (1, playlistId).bind (2, name).execute();
 }
 
 void Library::loadOfflineIndex()

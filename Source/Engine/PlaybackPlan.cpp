@@ -46,8 +46,8 @@ PlaybackPlan makePlan (const StreamFormat& src, const DeviceCapabilities& caps, 
 
     if (src.isDsd())
     {
-        const bool nativeOk = caps.nativeDsdRates.contains (src.sampleRate);
-        const bool dopOk = s.dopAllowed && supports (caps, src.sampleRate / 16.0);
+        const bool nativeOk = ! s.dspNeedsPcm && caps.nativeDsdRates.contains (src.sampleRate);
+        const bool dopOk = ! s.dspNeedsPcm && s.dopAllowed && supports (caps, src.sampleRate / 16.0);
 
         if ((s.dsdMode == DsdMode::Auto || s.dsdMode == DsdMode::Native) && nativeOk)
         {
@@ -85,7 +85,8 @@ PlaybackPlan makePlan (const StreamFormat& src, const DeviceCapabilities& caps, 
         }
         p.ringBitsHint = 32;
         p.needsRequantize = true;
-        p.reason = juce::String (s.profileTag.isNotEmpty() ? "Profil "_t + s.profileTag + " : "
+        p.reason = juce::String (s.dspNeedsPcm ? "Outils Studio actifs : "_t
+                                 : s.profileTag.isNotEmpty() ? "Profil "_t + s.profileTag + " : "
                                  : caps.nativeDsdRates.isEmpty() && ! dopOk ? "Le DAC n'accepte ni DSD natif ni DoP à ce débit : "_t
                                                                             : "Conversion demandée : "_t)
                    + "DSD -> PCM " + formatRate (p.deviceRate) + " (" + filterName + ")";

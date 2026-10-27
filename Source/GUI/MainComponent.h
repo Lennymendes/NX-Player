@@ -7,6 +7,9 @@
 #include "NowPlaying.h"
 #include "Pages.h"
 #include "Marketplace.h"
+#include "SettingsWindow.h"
+#include "Onboarding.h"
+#include "Immersive.h"
 
 namespace nx
 {
@@ -37,7 +40,7 @@ private:
     double shownAt = 0.0;
 };
 
-class MainComponent : public juce::Component, private juce::Timer, private juce::FocusChangeListener
+class MainComponent : public juce::Component, public juce::DragAndDropContainer, private juce::Timer, private juce::FocusChangeListener
 {
 public:
     explicit MainComponent (AppContext& ctx);
@@ -61,8 +64,18 @@ public:
     void themeChanged();
     void pluginsChanged();
     void showMessage (const juce::String& text) { toast.show (text); }
-    void setLyrics (const Lyrics& l, const juce::String& status) { nowPlaying.setLyrics (l, status); }
+    void setLyrics (const Lyrics& l, const juce::String& status) { nowPlaying.setLyrics (l, status); immersive.setLyrics (l, status); }
     void showSignalPath();
+    void showRemote();
+    void openSettings (const juce::String& tab);
+    void showOnboarding();
+    void setImmersive (bool on);
+    bool isImmersive() const { return immersive.isVisible(); }
+    void languageChanged();
+    SettingsWindow& getSettingsWindow() { return settingsWindow; }
+    OnboardingWizard& getOnboarding() { return onboarding; }
+    ImmersiveView& getImmersive() { return immersive; }
+    ListingPage& getListing() { return listing; }
     PageRequest getCurrentPage() const { return current; }
     MarketplacePage& getMarketplace() { return marketplace; }
 
@@ -70,7 +83,7 @@ public:
     Sidebar sidebar;
     PlayerBar player;
 
-    IconButton sidebarButton, backButton, forwardButton;
+    IconButton sidebarButton, backButton, forwardButton, remoteButton, settingsButton;
 
 private:
     void open (const PageRequest& r);
@@ -89,14 +102,18 @@ private:
     ListingPage listing;
     NowPlayingPage nowPlaying;
     SourcePage sourcePage;
-    SettingsPage settingsPage;
     MarketplacePage marketplace;
     QueuePanel queue;
     Toast toast;
     std::unique_ptr<PluginSlot> homeSlot;
+    SettingsWindow settingsWindow;
+    ImmersiveView immersive;
+    OnboardingWizard onboarding;
+    juce::TooltipWindow tooltips { this, 650 };
     juce::Component* visiblePage = nullptr;
     PageRequest current;
     bool queueVisible = false;
+    bool immersiveMadeFullScreen = false;
 };
 
 } // namespace nx

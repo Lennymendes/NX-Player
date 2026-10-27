@@ -3,6 +3,8 @@
 
 #include "Style.h"
 #include "Artwork.h"
+#include <map>
+#include <set>
 
 namespace nx
 {
@@ -135,9 +137,20 @@ public:
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     std::function<void (const AlbumInfo&)> onOpen, onPlay;
+    /** Right click: the selection (at least the clicked card). Default: the album menu (playlists, NAS clean-up...). */
+    std::function<void (const std::vector<AlbumInfo>&)> onContextMenu;
     int maxRows = 0;          // 0 = unlimited
+    bool roundArt = false;    // artists: round medallions
+    bool libraryAlbums = true;// cards are library albums (context menu, drag to a playlist, NAS badge)
+    const std::vector<AlbumInfo>& getAlbums() const noexcept { return albums; }
+    std::vector<AlbumInfo> getSelection() const;
+    void selectAll();
+    void clearSelection() { selected.clear(); repaint(); }
+    int getNumSelected() const noexcept { return (int) selected.size(); }
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
     juce::Rectangle<int> cardBounds (int index) const;
@@ -145,7 +158,31 @@ private:
     int indexAt (juce::Point<int>) const;
     AppContext& ctx;
     std::vector<AlbumInfo> albums;
-    int hover = -1;
+    std::set<int> selected;
+    int hover = -1, anchor = -1;
+    bool dragStarted = false;
+};
+
+/** Horizontal pills (library filters: Albums | Artistes | Pistes | Genres | Ajouts récents | DXD | DSD | Hi-Res | CD). */
+class PillBar : public juce::Component
+{
+public:
+    explicit PillBar (AppContext& c) : ctx (c) { setRepaintsOnMouseActivity (true); }
+    void setPills (juce::StringArray ids, juce::StringArray labels, const juce::String& active);
+    void setCounts (std::map<juce::String, int> c) { counts = std::move (c); repaint(); }
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    std::function<void (const juce::String&)> onSelect;
+    juce::String getActive() const { return active; }
+    int getNumPills() const { return ids.size(); }
+    juce::Rectangle<int> pillBounds (int i) const { return i >= 0 && i < (int) bounds.size() ? bounds[(size_t) i] : juce::Rectangle<int>(); }
+private:
+    void layoutPills();
+    AppContext& ctx;
+    juce::StringArray ids, labels;
+    juce::String active;
+    std::map<juce::String, int> counts;
+    std::vector<juce::Rectangle<int>> bounds;
 };
 
 class TrackList : public juce::Component, private juce::ChangeListener
@@ -161,15 +198,22 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     const std::vector<TrackInfo>& getTracks() const noexcept { return tracks; }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     static constexpr int rowHeight = 54;
+    /** Playlist page: the id of the playlist shown ("Retirer de cette playlist"). */
+    juce::int64 playlistContext = 0;
+    std::function<void()> onChanged;      // favourites / playlist edited from the list
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
     void download (const std::vector<TrackInfo>& list);
     AppContext& ctx;
     std::vector<TrackInfo> tracks;
     std::vector<juce::Rectangle<int>> downloadButtons;   // per row, filled while painting (remote tracks only)
+    std::vector<juce::Rectangle<int>> heartButtons;
     bool artwork = true, album = true, numbered = false;
     int hover = -1, selected = -1;
+    bool dragStarted = false;
 };
 
 /** Scrollable page content with a title. Children are laid out by the page. */

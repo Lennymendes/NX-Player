@@ -1,6 +1,11 @@
 // NX Player — MIT License
 #include "MainComponent.h"
 #include "../Ext/PluginManager.h"
+#include "../Engine/DeviceProfiles.h"
+#include "../Library/ArtistInfo.h"
+#include "../Remote/RemoteServer.h"
+#include "LibraryActions.h"
+#include "Dashboard.h"
 
 namespace nx
 {
@@ -41,7 +46,7 @@ void QueuePanel::paint (juce::Graphics& g)
     {
         g.setColour (t.textDim());
         g.setFont (style::font (14.0f));
-        g.drawText ("Vide", r.removeFromTop (30), juce::Justification::centredLeft);
+        g.drawText ("Vide"_t, r.removeFromTop (30), juce::Justification::centredLeft);
     }
     g.restoreState();
 }
@@ -94,8 +99,11 @@ MainComponent::MainComponent (AppContext& c)
     : background (c), sidebar (c), player (c),
       sidebarButton (style::Icon::SidebarToggle, "Afficher / masquer la barre latérale"_t, c),
       backButton (style::Icon::ChevronLeft, "Précédent"_t, c),
-      forwardButton (style::Icon::ChevronRight, "Suivant", c),
-      ctx (c), listing (c), nowPlaying (c), sourcePage (c), settingsPage (c), marketplace (c), queue (c), toast (c)
+      forwardButton (style::Icon::ChevronRight, "Suivant"_t, c),
+      remoteButton (style::Icon::Phone, "NX Remote : piloter depuis le téléphone (QR code)"_t, c),
+      settingsButton (style::Icon::Settings, "Réglages (Cmd/Ctrl + ,)"_t, c),
+      ctx (c), listing (c), nowPlaying (c), sourcePage (c), marketplace (c), queue (c), toast (c),
+      settingsWindow (c), immersive (c), onboarding (c)
 {
     homeSlot = std::make_unique<PluginSlot> (c, "home.top");
     addAndMakeVisible (background);
@@ -103,10 +111,11 @@ MainComponent::MainComponent (AppContext& c)
     addChildComponent (listing);
     addChildComponent (nowPlaying);
     addChildComponent (sourcePage);
-    addChildComponent (settingsPage);
     addChildComponent (marketplace);
-    for (auto* b : { &sidebarButton, &backButton, &forwardButton }) addAndMakeVisible (b);
+    for (auto* b : { &sidebarButton, &backButton, &forwardButton, &remoteButton, &settingsButton }) addAndMakeVisible (b);
     sidebarButton.onClick = [this] { setSidebarVisible (! sidebarVisible); };
+    remoteButton.onClick = [this] { showRemote(); };
+    settingsButton.onClick = [this] { openSettings ({}); };
     backButton.onClick = [this] { goBack(); };
     forwardButton.onClick = [this] { goForward(); };
     sidebarVisible = (bool) ctx.settings().get ("sidebarVisible", true);
@@ -122,7 +131,20 @@ MainComponent::MainComponent (AppContext& c)
     };
     addAndMakeVisible (player);
     addChildComponent (queue);
+    addChildComponent (immersive);
+    addChildComponent (settingsWindow);
+    addChildComponent (onboarding);
     addChildComponent (toast);
+    settingsWindow.onClose = [this] { grabKeyboardFocus(); };
+    immersive.onClose = [this]
+    {
+        if (auto* peer = getPeer(); peer != nullptr && peer->isFullScreen() && immersiveMadeFullScreen) peer->setFullScreen (false);
+        immersiveMadeFullScreen = false;
+        player.immersiveButton.active = false;
+        player.immersiveButton.repaint();
+        grabKeyboardFocus();
+    };
+    onboarding.onFinished = [this] { sidebar.refresh(); navigate ({ PageId::Home }); grabKeyboardFocus(); };
     setWantsKeyboardFocus (true);
     juce::Desktop::getInstance().addFocusChangeListener (this);
 
@@ -136,6 +158,7 @@ MainComponent::MainComponent (AppContext& c)
     };
     player.onShowSignalPath = [this] { showSignalPath(); };
     player.onOpenNowPlaying = [this] { navigate ({ PageId::NowPlaying }); };
+    player.onImmersive = [this] { setImmersive (! immersive.isVisible()); };
 
     navigate ({ PageId::Home });
 }
@@ -160,6 +183,94 @@ void MainComponent::showSignalPath()
     box.setArrowSize (10.0f);
 }
 
+void MainComponent::showRemote()
+{
+    struct RemotePopup : juce::Component
+    {
+        AppContext& ctx;
+        juce::ToggleButton enable;
+        std::unique_ptr<RemotePanel> panel;
+        explicit RemotePopup (AppContext& c) : ctx (c), enable ("Activer NX Remote (Wi-Fi)"_t)
+        {
+            enable.setToggleState (ctx.remote().isRunning(), juce::dontSendNotification);
+            enable.onClick = [this] { ctx.setRemoteEnabled (enable.getToggleState()); enable.setToggleState (ctx.remote().isRunning(), juce::dontSendNotification); update(); };
+            addAndMakeVisible (enable);
+            update();
+        }
+        void update()
+        {
+            if (ctx.remote().isRunning() && panel == nullptr) { panel = std::make_unique<RemotePanel> (ctx); addAndMakeVisible (*panel); }
+            if (! ctx.remote().isRunning()) panel.reset();
+            setSize (620, ctx.remote().isRunning() ? 48 + RemotePanelHeight : 110);
+            resized();
+            repaint();
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            enable.setBounds (r.removeFromTop (32));
+            if (panel != nullptr) panel->setBounds (r.withTrimmedTop (6));
+        }
+        void paint (juce::Graphics& g) override
+        {
+            if (panel != nullptr) return;
+            g.setColour (ctx.theme().textDim());
+            g.setFont (style::font (13.0f));
+            g.drawFittedText ("Contrôlez NX Player depuis votre téléphone, sur le même réseau Wi-Fi : activez NX Remote puis scannez le QR code. "_t
+                              "Le serveur ne démarre qu'à la demande."_t, getLocalBounds().reduced (10).withTrimmedTop (40), juce::Justification::topLeft, 3);
+        }
+    };
+    auto popup = std::make_unique<RemotePopup> (ctx);
+    juce::CallOutBox::launchAsynchronously (std::move (popup), remoteButton.getBounds(), this);
+}
+
+void MainComponent::openSettings (const juce::String& tab)
+{
+    if (immersive.isVisible()) setImmersive (false);
+    settingsWindow.setBounds (getLocalBounds());
+    settingsWindow.open (tab);
+    if (onboarding.isVisible()) onboarding.toFront (false);
+    toast.toFront (false);
+}
+
+void MainComponent::showOnboarding()
+{
+    settingsWindow.close();
+    if (immersive.isVisible()) setImmersive (false);
+    onboarding.setBounds (getLocalBounds());
+    onboarding.start();
+    toast.toFront (false);
+}
+
+void MainComponent::setImmersive (bool on)
+{
+    if (on == immersive.isVisible()) return;
+    if (on)
+    {
+        immersive.setBounds (getLocalBounds());
+        immersive.open();
+        toast.toFront (false);
+        if (auto* peer = getPeer(); peer != nullptr && ! peer->isFullScreen() && (bool) ctx.settings().get ("immersiveFullScreen", true))
+        {
+            peer->setFullScreen (true);
+            immersiveMadeFullScreen = true;
+        }
+        player.immersiveButton.active = true;
+        player.immersiveButton.repaint();
+    }
+    else immersive.close();
+}
+
+void MainComponent::languageChanged()
+{
+    sidebar.refresh();
+    player.trackChanged();
+    if (settingsWindow.isVisible()) settingsWindow.refresh();
+    if (onboarding.isVisible()) { onboarding.setStep (onboarding.getStep()); }
+    open (current);
+    repaint();
+}
+
 void MainComponent::resized()
 {
     background.setBounds (getLocalBounds());
@@ -179,19 +290,24 @@ void MainComponent::resized()
     sidebar.setBounds (r.getX() - (sideW + margin) + shown, r.getY(), sideW, r.getHeight());
     r.removeFromLeft (shown);
 
-    // Navigation row: sidebar toggle, back, forward.
+    // Navigation row: sidebar toggle, back, forward ... NX Remote, settings (gear).
     auto nav = r.removeFromTop (34);
     for (auto* b : { &sidebarButton, &backButton, &forwardButton })
     {
         b->setBounds (nav.removeFromLeft (34).reduced (2));
         nav.removeFromLeft (2);
     }
+    settingsButton.setBounds (nav.removeFromRight (34).reduced (2));
+    nav.removeFromRight (4);
+    remoteButton.setBounds (nav.removeFromRight (34).reduced (2));
+    remoteButton.active = ctx.remote().isRunning();
     r.removeFromTop (2);
 
     if (queueVisible) queue.setBounds (r.removeFromRight (juce::jmin (340, r.getWidth() / 3)).withTrimmedLeft (0));
     if (queueVisible) r.removeFromRight (margin);
 
-    for (auto* p : std::initializer_list<juce::Component*> { &listing, &nowPlaying, &sourcePage, &settingsPage, &marketplace }) p->setBounds (r);
+    for (auto* p : std::initializer_list<juce::Component*> { &listing, &nowPlaying, &sourcePage, &marketplace }) p->setBounds (r);
+    for (auto* o : std::initializer_list<juce::Component*> { &settingsWindow, &immersive, &onboarding }) o->setBounds (getLocalBounds());
     toast.setBounds (getLocalBounds().withSizeKeepingCentre (juce::jmin (640, getWidth() - 40), 40).withY (getHeight() - playerH - margin * 2 - 52));
 }
 
@@ -218,6 +334,8 @@ void MainComponent::setSidebarVisible (bool visible, bool animate)
 
 void MainComponent::navigate (const PageRequest& r)
 {
+    if (r.page == PageId::Settings) { openSettings (r.a); return; }   // a window over the page, not a page
+    if (settingsWindow.isVisible()) settingsWindow.close();
     // History: drop the "forward" part, collapse consecutive searches (typing) into one entry.
     if (historyPos >= 0 && history[(size_t) historyPos] == r) { open (r); return; }
     history.resize ((size_t) (historyPos + 1));
@@ -256,7 +374,6 @@ void MainComponent::open (const PageRequest& r)
 
     if (r.page == PageId::NowPlaying) { nowPlaying.trackChanged(); showPage (&nowPlaying); return; }
     if (r.page == PageId::Source) { sourcePage.setSource (r.a, r.b); showPage (&sourcePage); return; }
-    if (r.page == PageId::Settings) { settingsPage.refresh(); showPage (&settingsPage); return; }
     if (r.page == PageId::Marketplace || r.page == PageId::UserPlugins)
     {
         marketplace.setMode (r.page == PageId::UserPlugins ? MarketplacePage::Mode::UserPlugins : MarketplacePage::Mode::Gallery, r.a);
@@ -272,6 +389,13 @@ void MainComponent::open (const PageRequest& r)
     listing.ctaText = {};
     listing.ctaAction = nullptr;
     listing.grid.maxRows = 0;
+    listing.grid.roundArt = false;
+    listing.grid.libraryAlbums = true;
+    listing.grid.onContextMenu = nullptr;
+    listing.showPills = false;
+    listing.artistName = {};
+    listing.list.playlistContext = 0;
+    listing.list.onChanged = nullptr;
     listing.grid.onOpen = [this] (const AlbumInfo& a) { navigate ({ PageId::AlbumDetail, a.artist, a.title }); };
     listing.grid.onPlay = [this] (const AlbumInfo& a) { ctx.playTracks (ctx.library().getAlbumTracks (a.artist, a.title), 0); };
     if (homeSlot->getParentComponent() != nullptr) homeSlot->getParentComponent()->removeChildComponent (homeSlot.get());
@@ -282,7 +406,7 @@ void MainComponent::open (const PageRequest& r)
             listing.loader = [this, &lib] (ListingPage& p)
             {
                 const int hour = juce::Time::getCurrentTime().getHours();
-                p.title = hour < 6 || hour >= 18 ? "Bonsoir" : "Bonjour";
+                p.title = hour < 6 || hour >= 18 ? "Bonsoir"_t : "Bonjour"_t;
                 const int n = lib.countTracks();
                 p.subtitle = n == 0 ? juce::String ("Ajoutez un dossier de musique ou connectez une source dans la barre latérale."_t)
                                     : juce::String (n) + " morceaux · "_t + juce::String ((int) lib.getAlbums ("added", 100000).size()) + " albums";
@@ -296,54 +420,131 @@ void MainComponent::open (const PageRequest& r)
                 p.heroTracks = p.list.getTracks();
             };
             break;
+        case PageId::Library:
         case PageId::RecentlyAdded:
-            listing.loader = [&lib] (ListingPage& p)
-            {
-                p.title = "Ajouts récents"_t; p.subtitle = {};
-                p.grid.setAlbums (lib.getAlbums ("added", 500));
-                p.list.setTracks ({});
-            };
-            break;
         case PageId::Albums:
-            listing.loader = [&lib] (ListingPage& p)
+        case PageId::Artists:
+        case PageId::Songs:
+        case PageId::Genre:
+        {
+            // One library view with the Audirvana-style pills: views, then quality filters.
+            juce::String tab = r.page == PageId::RecentlyAdded ? "recents" : r.page == PageId::Albums ? "albums" : r.page == PageId::Artists ? "artistes"
+                             : r.page == PageId::Songs ? "pistes" : r.page == PageId::Genre ? "genres" : (r.a.isNotEmpty() ? r.a : juce::String ("albums"));
+            listing.loader = [this, &lib, tab, r] (ListingPage& p)
             {
-                auto albums = lib.getAlbums ("artist", 5000);
-                p.title = "Albums"; p.subtitle = juce::String ((int) albums.size()) + " albums";
-                p.grid.setAlbums (albums);
+                p.showPills = true;
+                p.pills.setPills ({ "albums", "artistes", "pistes", "genres", "recents", "dxd", "dsd", "hires", "cd" },
+                                  { "Albums", "Artistes"_t, "Pistes"_t, "Genres", "Ajouts récents"_t, "DXD", "DSD", "Hi-Res", "CD" }, tab);
+                p.pills.setCounts ({ { "dxd", lib.countTracksFiltered (QualityFilter::Dxd) }, { "dsd", lib.countTracksFiltered (QualityFilter::Dsd) },
+                                     { "hires", lib.countTracksFiltered (QualityFilter::HiRes) }, { "cd", lib.countTracksFiltered (QualityFilter::Cd) } });
                 p.list.setTracks ({});
+                p.grid.setAlbums ({});
+                p.title = "Bibliothèque"_t;
+                if (tab == "albums")
+                {
+                    auto albums = lib.getAlbums ("artist", 5000);
+                    p.subtitle = juce::String ((int) albums.size()) + " albums";
+                    p.grid.setAlbums (albums);
+                }
+                else if (tab == "recents")
+                {
+                    p.subtitle = "Ajouts récents"_t;
+                    p.grid.setAlbums (lib.getAlbums ("added", 500));
+                }
+                else if (tab == "artistes")
+                {
+                    std::vector<AlbumInfo> cards;
+                    juce::StringArray names;
+                    for (auto& a : lib.getArtists())
+                    {
+                        AlbumInfo c; c.title = a.name; c.artist = juce::String (a.albumCount) + " albums · "_t + juce::String (a.trackCount) + " morceaux"_t;
+                        c.artworkKey = a.artworkKey;
+                        if (auto m = lib.getArtistMeta (a.name); m && m->imageUrl.isNotEmpty()) c.artworkKey = m->imageUrl;
+                        cards.push_back (c);
+                        names.add (a.name);
+                    }
+                    ctx.artistInfo().prefetch (names);     // photos arrive in the background (≈ 1 artist / s)
+                    p.subtitle = juce::String ((int) cards.size()) + " artistes"_t;
+                    p.grid.roundArt = true;
+                    p.grid.libraryAlbums = false;
+                    p.grid.setAlbums (cards);
+                    p.grid.onOpen = [this] (const AlbumInfo& a) { navigate ({ PageId::ArtistDetail, a.title }); };
+                    p.grid.onPlay = [this] (const AlbumInfo& a) { ctx.playTracks (ctx.library().getArtistTracks (a.title), 0); };
+                }
+                else if (tab == "pistes")
+                {
+                    auto tracks = lib.getTracks ("artist", 20000);
+                    p.subtitle = juce::String ((int) tracks.size()) + " morceaux"_t;
+                    p.list.setTracks (tracks);
+                    p.heroTracks = tracks;
+                }
+                else if (tab == "genres")
+                {
+                    if (r.page == PageId::Genre && r.a.isNotEmpty())
+                    {
+                        p.title = r.a;
+                        p.subtitle = "Genre"_t;
+                        p.grid.setAlbums (lib.getAlbumsFiltered (QualityFilter::Any, r.a));
+                        p.heroTracks = lib.getTracksFiltered (QualityFilter::Any, r.a);
+                    }
+                    else
+                    {
+                        std::vector<AlbumInfo> cards;
+                        for (auto& gnr : lib.getGenres())
+                        {
+                            AlbumInfo c; c.title = gnr.name; c.artist = juce::String (gnr.albumCount) + " albums · "_t + juce::String (gnr.trackCount) + " morceaux"_t;
+                            c.artworkKey = gnr.artworkKey;
+                            cards.push_back (c);
+                        }
+                        p.subtitle = cards.empty() ? juce::String ("Aucun genre dans les tags"_t) : juce::String ((int) cards.size()) + " genres";
+                        p.grid.libraryAlbums = false;
+                        p.grid.setAlbums (cards);
+                        p.grid.onOpen = [this] (const AlbumInfo& a) { navigate ({ PageId::Genre, a.title }); };
+                        p.grid.onPlay = [this] (const AlbumInfo& a) { ctx.playTracks (ctx.library().getTracksFiltered (QualityFilter::Any, a.title), 0); };
+                    }
+                }
+                else
+                {
+                    const auto q = tab == "dxd" ? QualityFilter::Dxd : tab == "dsd" ? QualityFilter::Dsd : tab == "hires" ? QualityFilter::HiRes : QualityFilter::Cd;
+                    const juce::String names[] = { {}, "DXD (352,8 / 384 kHz)"_t, "DSD (natif, DoP ou converti)"_t, "Hi-Res (> 48 kHz ou > 16 bits)"_t, "Qualité CD (16 bits / 44,1 – 48 kHz)"_t };
+                    auto albums = lib.getAlbumsFiltered (q);
+                    p.subtitle = juce::String ((int) albums.size()) + " albums · "_t + names[(int) q];
+                    p.grid.setAlbums (albums);
+                    p.heroTracks = lib.getTracksFiltered (q);
+                }
             };
             break;
+        }
         case PageId::AlbumDetail:
-            listing.loader = [&lib, r] (ListingPage& p)
+            listing.loader = [this, &lib, r] (ListingPage& p)
             {
                 auto tracks = lib.getAlbumTracks (r.a, r.b);
                 p.hero = true;
                 p.title = r.b;
-                double dur = 0; int year = 0; juce::String badge, art;
-                for (auto& t : tracks) { dur += t.duration; year = juce::jmax (year, t.year); if (art.isEmpty()) art = t.artworkKey; }
+                double dur = 0; int year = 0; juce::String badge, art, nas;
+                for (auto& t : tracks) { dur += t.duration; year = juce::jmax (year, t.year); if (art.isEmpty()) art = t.artworkKey; if (t.source.startsWith ("upnp")) nas = t.source; }
                 if (! tracks.empty()) badge = tracks.front().resolutionBadge();
                 p.heroArtwork = art;
                 p.subtitle = r.a + "\n" + (year > 0 ? juce::String (year) + " · "_t : juce::String()) + juce::String ((int) tracks.size()) + " morceaux · "_t
-                             + style::formatTime (dur) + (badge.isNotEmpty() ? " · "_t + badge : juce::String());
+                             + style::formatTime (dur) + (badge.isNotEmpty() ? " · "_t + badge : juce::String())
+                             + (nas.isNotEmpty() ? " · "_t + ctx.networkSourceLabel (nas) : juce::String());
                 p.grid.setAlbums ({});
                 p.list.setTracks (tracks, false, false, true);
                 p.heroTracks = tracks;
             };
             break;
-        case PageId::Artists:
+        case PageId::Favourites:
             listing.loader = [this, &lib] (ListingPage& p)
             {
-                std::vector<AlbumInfo> cards;
-                for (auto& a : lib.getArtists())
-                {
-                    AlbumInfo c; c.title = a.name; c.artist = juce::String (a.albumCount) + " albums · "_t + juce::String (a.trackCount) + " morceaux"; c.artworkKey = a.artworkKey;
-                    cards.push_back (c);
-                }
-                p.title = "Artistes"; p.subtitle = juce::String ((int) cards.size()) + " artistes";
-                p.grid.setAlbums (cards);
-                p.grid.onOpen = [this] (const AlbumInfo& a) { navigate ({ PageId::ArtistDetail, a.title }); };
-                p.grid.onPlay = [this] (const AlbumInfo& a) { ctx.playTracks (ctx.library().getArtistTracks (a.title), 0); };
-                p.list.setTracks ({});
+                auto albums = lib.getFavouriteAlbums();
+                auto tracks = lib.getFavouriteTracks();
+                p.title = "Favoris"_t;
+                p.subtitle = albums.empty() && tracks.empty() ? juce::String ("Cliquez sur le cœur d'un morceau, ou clic droit › Ajouter aux favoris, ou glissez des morceaux sur Favoris."_t)
+                                                              : juce::String ((int) albums.size()) + " album(s) · "_t + juce::String ((int) tracks.size()) + " morceau(x)"_t;
+                p.grid.setAlbums (albums);
+                p.list.setTracks (tracks);
+                p.heroTracks = tracks;
+                p.list.onChanged = [this] { refreshCurrentPage(); };
             };
             break;
         case PageId::ArtistDetail:
@@ -352,18 +553,10 @@ void MainComponent::open (const PageRequest& r)
                 std::vector<AlbumInfo> albums;
                 for (auto& a : lib.getAlbums ("year", 5000)) if (a.artist == r.a) albums.push_back (a);
                 const auto tracks = lib.getArtistTracks (r.a);
-                p.title = r.a; p.subtitle = juce::String ((int) albums.size()) + " albums · "_t + juce::String ((int) tracks.size()) + " morceaux";
+                p.artistName = r.a;
+                p.title = r.a; p.subtitle = {};
+                p.artistHeader.setArtist (r.a, (int) albums.size(), (int) tracks.size());
                 p.grid.setAlbums (albums);
-                p.list.setTracks (tracks);
-                p.heroTracks = tracks;
-            };
-            break;
-        case PageId::Songs:
-            listing.loader = [&lib] (ListingPage& p)
-            {
-                auto tracks = lib.getTracks ("artist", 20000);
-                p.title = "Morceaux"; p.subtitle = juce::String ((int) tracks.size()) + " morceaux";
-                p.grid.setAlbums ({});
                 p.list.setTracks (tracks);
                 p.heroTracks = tracks;
             };
@@ -393,9 +586,10 @@ void MainComponent::open (const PageRequest& r)
                 juce::String name;
                 for (auto& pl : lib.getPlaylists()) if (pl.id == id) name = pl.name;
                 auto tracks = lib.getPlaylistTracks (id);
-                p.title = name; p.subtitle = juce::String ((int) tracks.size()) + " morceaux";
+                p.title = name; p.subtitle = juce::String ((int) tracks.size()) + " morceaux"_t;
                 p.grid.setAlbums ({});
                 p.list.setTracks (tracks);
+                p.list.playlistContext = id;
                 p.heroTracks = tracks;
             };
             break;
@@ -434,6 +628,7 @@ void MainComponent::refreshCurrentPage()
 void MainComponent::trackChanged()
 {
     player.trackChanged();
+    if (immersive.isVisible()) immersive.trackChanged();
     nowPlaying.trackChanged();
     queue.repaint();
     if (const auto* t = ctx.currentTrack()) background.setArtwork (t->artworkKey, t->album);
@@ -451,7 +646,8 @@ void MainComponent::themeChanged()
     background.themeChanged();
     resized();
     for (auto* p : std::initializer_list<juce::Component*> { &listing, &sourcePage }) p->resized();
-    settingsPage.refresh();
+    if (settingsWindow.isVisible()) settingsWindow.refresh();
+    if (immersive.isVisible()) immersive.refreshConfig();
     if (current.page == PageId::Marketplace || current.page == PageId::UserPlugins) marketplace.refresh();
     repaint();
 }
@@ -463,7 +659,8 @@ void MainComponent::pluginsChanged()
     nowPlaying.refreshPlugins();
     homeSlot->refreshPlugins();
     if (current.page == PageId::Home) listing.refresh();
-    if (current.page == PageId::Settings) settingsPage.refresh();
+    if (settingsWindow.isVisible()) settingsWindow.refresh();
+    if (immersive.isVisible()) immersive.refreshConfig();
     if (current.page == PageId::Marketplace || current.page == PageId::UserPlugins) marketplace.refresh();
 }
 
@@ -478,7 +675,15 @@ void MainComponent::timerCallback()
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
     auto& e = ctx.engine();
-    if (k == juce::KeyPress::escapeKey) { grabKeyboardFocus(); return true; }   // leave the search field
+    if (k == juce::KeyPress::escapeKey)
+    {
+        if (settingsWindow.isVisible()) settingsWindow.close();
+        else if (immersive.isVisible()) setImmersive (false);
+        grabKeyboardFocus();                                         // leave the search field
+        return true;
+    }
+    if (k == juce::KeyPress (',', juce::ModifierKeys::commandModifier, 0)) { openSettings ({}); return true; }
+    if (onboarding.isVisible()) return false;
     if (k == juce::KeyPress::spaceKey) { e.togglePlayPause(); return true; }
     if (k == juce::KeyPress::rightKey) { e.seek (e.getPositionSeconds() + 10.0); return true; }
     if (k == juce::KeyPress::leftKey)  { e.seek (juce::jmax (0.0, e.getPositionSeconds() - 10.0)); return true; }
@@ -498,6 +703,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
         if (c == 'i') { player.markLoopA(); return true; }
         if (c == 'o') { player.markLoopB(); return true; }
         if (c == 'l') { player.clearLoop(); return true; }
+        if (c == 'f') { setImmersive (! immersive.isVisible()); return true; }
     }
     return false;
 }

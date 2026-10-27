@@ -4,6 +4,8 @@
 #include "../Providers/UpnpProvider.h"
 #include "../Providers/StreamingProviders.h"
 #include "../Output/CaptureBackend.h"
+#include "../Engine/DeviceProfiles.h"
+#include "../Platform/AuraBridge.h"
 
 namespace nx
 {
@@ -36,6 +38,8 @@ AppController::AppController (Options options)
     dataDir.createDirectory();
     appSettings.file = dataDir.getChildFile ("settings.json");
     appSettings.load();
+    i18n::setLanguage (appSettings.get ("language", "fr").toString());
+    applyLayoutSettings();
 
     juce::String err;
     if (! lib.open (dataDir, err)) juce::Logger::writeToLog ("bibliothèque : "_t + err);
@@ -82,6 +86,35 @@ AppController::AppController (Options options)
         downloadManager->setFolder (juce::File (folder));
     downloadManager->onMessage = [this] (const juce::String& m) { showMessage (m); };
 
+    // Artist pages (photos, biographies) and NX Remote
+    artistInfoService = std::make_unique<ArtistInfoService> (lib);
+    artistInfoService->setEnabled ((bool) appSettings.get ("artistInfoOnline", true));
+    artistInfoService->language = i18n::getLanguage();
+    remoteServer = std::make_unique<RemoteServer>();
+    remoteServer->onCommand = [this] (const juce::String& c, const juce::StringPairArray& p) { handleRemoteCommand (c, p); };
+    remoteServer->onLibraryQuery = [this] (const juce::StringPairArray& p) { return buildRemoteLibrary (p); };
+    remoteServer->getArtwork = [this] (const juce::String& key, juce::String& mime) -> juce::MemoryBlock
+    {
+        juce::MemoryBlock out;
+        if (key.isEmpty()) return out;
+        if (auto f = lib.getArtworkFile (key); f.existsAsFile() && f.getSize() < 8 * 1024 * 1024)
+        {
+            f.loadFileAsData (out);
+            mime = f.hasFileExtension ("png") ? "image/png" : "image/jpeg";
+            return out;
+        }
+        const auto img = artworkCache->loadNow (key, 600);
+        if (img.isValid())
+        {
+            juce::MemoryOutputStream jpg (out, false);
+            juce::JPEGImageFormat fmt;
+            fmt.setQuality (0.85f);
+            fmt.writeImageToStream (img, jpg);
+        }
+        mime = "image/jpeg";
+        return out;
+    };
+
     // Themes
     themeManager.setSearchFolders ({ resourcesDir.getChildFile ("Themes"), dataDir.getChildFile ("Themes") });
     themeManager.onThemeChanged = [this] (const Theme& t)
@@ -106,7 +139,7 @@ AppController::AppController (Options options)
     {
         if (auto* o = l.getDynamicObject())
             for (auto& prop : o->getProperties()) layout.getDynamicObject()->setProperty (prop.name, prop.value);
-        if (auto* m = getMainComponent()) m->resized();
+        if (auto* m = getMainComponent()) { m->resized(); if (m->isImmersive()) m->getImmersive().refreshConfig(); }
     };
     pluginManager.onPluginsChanged = [this]
     {
@@ -115,10 +148,10 @@ AppController::AppController (Options options)
         for (auto& p : pluginManager.getDspPlugins()) if (p.enabled) dsp.add (p.id);
         appSettings.set ("uiPlugins", ui);
         appSettings.set ("dspPlugins", dsp);
-        eng->setDspChain (pluginManager.buildDspChain());
+        rebuildDspChain();
         if (auto* m = getMainComponent()) m->pluginsChanged();
     };
-    eng->setDspChain (pluginManager.buildDspChain());
+    rebuildDspChain();
 
     // Engine notifications (message thread)
     eng->onTrackChanged = [this] { onTrackChanged(); };
@@ -181,6 +214,13 @@ AppController::AppController (Options options)
         headlessMain->setSize (1360, 860);
     }
 
+    // First launch: the setup assistant (language, layout, audio device, music sources)
+    if (options.createWindow && ! (bool) appSettings.get ("onboardingDone", false))
+    {
+        std::weak_ptr<int> weak = alive;
+        juce::MessageManager::callAsync ([this, weak] { if (! weak.expired()) showOnboarding(); });
+    }
+
     lastFrame = juce::Time::getMillisecondCounterHiRes() / 1000.0;
     startTimerHz (30);
 }
@@ -188,6 +228,8 @@ AppController::AppController (Options options)
 AppController::~AppController()
 {
     stopTimer();
+    remoteServer->stop();
+    sleepBlocker.setActive (false);
     mediaControls.reset();
     for (int i = 0; i < 400 && nasDiscoveryRunning.load(); ++i) juce::Thread::sleep (10);   // the NAS thread uses the providers
     if (mainWindow) appSettings.set ("windowBounds", mainWindow->getWindowStateAsString());
@@ -201,6 +243,7 @@ AppController::~AppController()
     audioAnalyzer.reset();
     eng.reset();
     downloadManager.reset();
+    artistInfoService.reset();
 }
 
 MainComponent* AppController::getMainComponent()
@@ -228,6 +271,8 @@ void AppController::loadEngineSettings()
         s.anubisProfile = (AnubisProfile) juce::jlimit (0, 2, (int) v.getProperty ("anubisProfile", 0));
         s.anubisDsdGainDb = (double) v.getProperty ("anubisDsdGain", 6.0);
         s.anubisHarmonics = (bool) v.getProperty ("anubisHarmonics", true);
+        s.memoryPlay = (bool) v.getProperty ("memoryPlay", true);
+        s.memoryPlayMaxMb = juce::jlimit (64, 8192, (int) v.getProperty ("memoryPlayMaxMb", 1536));
     }
     eng->setSettings (s);
     const auto device = appSettings.get ("device").toString();
@@ -250,6 +295,8 @@ void AppController::saveEngineSettings()
     o->setProperty ("anubisHarmonics", s.anubisHarmonics);
     o->setProperty ("rmeProfile", (int) s.rmeProfile);
     o->setProperty ("rmeLockVolume", s.rmeLockVolume);
+    o->setProperty ("memoryPlay", s.memoryPlay);
+    o->setProperty ("memoryPlayMaxMb", s.memoryPlayMaxMb);
     appSettings.set ("engine", juce::var (o));
 }
 
@@ -521,6 +568,12 @@ void AppController::timerCallback()
 
     pluginManager.setState ("time", now);
     updateSystemNowPlaying (false);
+    sleepBlocker.setActive (playing && (bool) appSettings.get ("preventSleep", true));
+    if (remoteServer->isRunning() && now - lastRemoteState > 0.25)
+    {
+        lastRemoteState = now;
+        remoteServer->setState (buildRemoteState());
+    }
     pluginManager.setState ("audio", audioAnalyzer->toVar());
     auto* player = new juce::DynamicObject();
     if (const auto* t = currentTrack())
@@ -543,6 +596,225 @@ void AppController::timerCallback()
     theme->setProperty ("textDim", "#" + th.textDim().toDisplayString (false));
     theme->setProperty ("bg", "#" + th.bg().toDisplayString (false));
     pluginManager.setState ("theme", juce::var (theme));
+}
+
+//==============================================================================
+void AppController::rebuildDspChain()
+{
+    auto chain = pluginManager.buildDspChain();
+    if (chain == nullptr) chain = std::make_unique<DspChain>();
+    chain->processors.push_back (std::make_unique<StudioToolsProcessor> (studio));
+    eng->setDspChain (std::move (chain));
+}
+
+void AppController::applyStudioTools()
+{
+    rebuildDspChain();
+    // DSD cannot be processed as 1-bit data: while a tool is on, DSD tracks are converted to PCM (DXD).
+    auto s = eng->getSettings();
+    const bool need = studio->anyActive();
+    if (s.dspNeedsPcm != need)
+    {
+        s.dspNeedsPcm = need;
+        // Re-plan the current track only when DSD is on the wire (DSD -> DXD now, or back to DoP / native).
+        const auto plan = eng->getCurrentPlan();
+        const bool affectsCurrent = plan.source.isDsd();
+        eng->setSettings (s, affectsCurrent);
+    }
+    if (auto* m = getMainComponent()) m->stateChanged();
+}
+
+void AppController::setUserVolume (double v)
+{
+    if (auto* m = getMainComponent()) m->player.setVolumeLevel (v);
+    else appSettings.set ("volume", juce::jlimit (0.0, 1.0, v));
+}
+
+double AppController::getUserVolume() { return (double) appSettings.get ("volume", 1.0); }
+
+bool AppController::setRemoteEnabled (bool on)
+{
+    if (! on) { remoteServer->stop(); return true; }
+    juce::String err;
+    if (! remoteServer->start (0, err)) { showMessage (err); return false; }
+    remoteServer->setState (buildRemoteState());
+    return true;
+}
+
+void AppController::setLanguage (const juce::String& code)
+{
+    i18n::setLanguage (code);
+    appSettings.set ("language", i18n::getLanguage());
+    artistInfoService->language = i18n::getLanguage();
+    if (auto* m = getMainComponent()) m->languageChanged();
+}
+
+void AppController::applyLayoutSettings()
+{
+    const auto l = appSettings.get ("layout");
+    auto* o = layout.getDynamicObject();
+    const auto sidebarMode = l.getProperty ("sidebar", "wide").toString();
+    if (sidebarMode == "compact") o->setProperty ("sidebarWidth", 76);
+    else o->removeProperty ("sidebarWidth");
+    const auto player = l.getProperty ("player", "bottom").toString();
+    if (player == "top") o->setProperty ("playerPosition", "top");
+    else o->removeProperty ("playerPosition");
+}
+
+void AppController::setLayoutOption (const juce::String& key, const juce::var& value)
+{
+    auto l = appSettings.get ("layout");
+    if (! l.isObject()) l = juce::var (new juce::DynamicObject());
+    l.getDynamicObject()->setProperty (key, value);
+    appSettings.set ("layout", l);
+    applyLayoutSettings();
+    if (auto* m = getMainComponent()) { m->resized(); m->sidebar.resized(); m->repaint(); }
+}
+
+void AppController::showOnboarding()
+{
+    if (auto* m = getMainComponent()) m->showOnboarding();
+}
+
+void AppController::setImmersive (bool on)
+{
+    if (auto* m = getMainComponent()) m->setImmersive (on);
+}
+
+void AppController::sendToAuraEngine (const std::vector<TrackInfo>& tracks)
+{
+    juce::Array<juce::File> files;
+    for (auto& t : tracks)
+    {
+        if (t.source == "local" && juce::File::isAbsolutePath (t.externalId)) files.add (juce::File (t.externalId));
+        else if (auto copy = lib.getOfflineCopy (t); copy.isNotEmpty()) files.add (juce::File (copy));
+    }
+    juce::String err;
+    if (aura::openFiles (files, appSettings.get ("auraEnginePath").toString(), err))
+        showMessage ("AuraEngine X : "_t + juce::String (files.size()) + " fichier(s) envoyé(s) pour analyse / conversion"_t);
+    else
+        showMessage (err);
+}
+
+juce::String AppController::networkSourceLabel (const juce::String& source)
+{
+    if (! source.startsWith ("upnp")) return {};
+    const auto udn = source.fromFirstOccurrenceOf (":", false, false);
+    if (auto* upnp = dynamic_cast<UpnpProvider*> (unified->getProvider ("upnp")))
+        for (auto& sv : upnp->getServers())
+            if (sv.udn == udn && sv.name.containsIgnoreCase ("jellyfin")) return "Jellyfin";
+    return "NAS";
+}
+
+//==============================================================================
+juce::String AppController::buildRemoteState()
+{
+    auto* o = new juce::DynamicObject();
+    const auto* t = currentTrack();
+    if (t != nullptr)
+    {
+        o->setProperty ("title", t->title);
+        o->setProperty ("artist", t->displayArtist());
+        o->setProperty ("album", t->album);
+        o->setProperty ("art", t->artworkKey.startsWith ("http") ? juce::String() : t->artworkKey);
+        o->setProperty ("format", t->resolutionBadge());
+        o->setProperty ("duration", t->duration > 0 ? t->duration : eng->getDurationSeconds());
+    }
+    o->setProperty ("position", eng->getPositionSeconds());
+    o->setProperty ("playing", eng->getState() == PlaybackEngine::State::Playing);
+    o->setProperty ("volume", getUserVolume());
+    o->setProperty ("volumeLocked", eng->isVolumeLockedByProfile());
+    o->setProperty ("loop", eng->isLoopActive());
+    o->setProperty ("loopA", eng->getLoopA());
+    o->setProperty ("loopB", eng->getLoopB());
+    const auto path = eng->getSignalPath();
+    o->setProperty ("path", path.nodes.empty() ? juce::String() : pipelineLabel (eng->getCurrentPlan(), toString (path.overall)));
+    o->setProperty ("quality", path.nodes.empty() ? juce::String() : toString (path.overall));
+    const auto settings = eng->getSettings();
+    const auto family = activeFamily (settings, eng->getDeviceName());
+    o->setProperty ("device", eng->getDeviceName());
+    o->setProperty ("family", family == DeviceFamily::Merging ? "merging" : family == DeviceFamily::Rme ? "rme" : "");
+    juce::Array<juce::var> profiles;
+    for (int i = 0; i < familyProfileCount (family); ++i) profiles.add (profileName (family, i));
+    o->setProperty ("profiles", profiles);
+    o->setProperty ("profile", family == DeviceFamily::None ? -1 : familyCurrentProfile (settings, family));
+    o->setProperty ("studio", studio->anyActive() ? studio->describe() : juce::String());
+    return juce::JSON::toString (juce::var (o), true);
+}
+
+juce::String AppController::buildRemoteLibrary (const juce::StringPairArray& params)
+{
+    auto* o = new juce::DynamicObject();
+    const auto q = params["q"].trim();
+    if (q.isEmpty())
+    {
+        juce::Array<juce::var> albums;
+        for (auto& a : lib.getAlbums ("artist", 400))
+        {
+            auto* x = new juce::DynamicObject();
+            x->setProperty ("title", a.title);
+            x->setProperty ("artist", a.artist);
+            x->setProperty ("art", a.artworkKey.startsWith ("http") ? juce::String() : a.artworkKey);
+            x->setProperty ("badge", a.badge());
+            albums.add (juce::var (x));
+        }
+        o->setProperty ("albums", albums);
+    }
+    else
+    {
+        juce::Array<juce::var> tracks;
+        for (auto& tr : lib.search (q, 80))
+        {
+            auto* x = new juce::DynamicObject();
+            x->setProperty ("id", tr.id);
+            x->setProperty ("title", tr.title);
+            x->setProperty ("artist", tr.displayArtist());
+            x->setProperty ("album", tr.album);
+            x->setProperty ("badge", tr.resolutionBadge());
+            x->setProperty ("art", tr.artworkKey.startsWith ("http") ? juce::String() : tr.artworkKey);
+            tracks.add (juce::var (x));
+        }
+        o->setProperty ("tracks", tracks);
+    }
+    return juce::JSON::toString (juce::var (o), true);
+}
+
+void AppController::handleRemoteCommand (const juce::String& c, const juce::StringPairArray& p)
+{
+    auto* main = getMainComponent();
+    if (c == "play") eng->play();
+    else if (c == "pause") eng->pause();
+    else if (c == "toggle") eng->togglePlayPause();
+    else if (c == "next") eng->next();
+    else if (c == "prev") eng->previous();
+    else if (c == "seek") eng->seek (juce::jmax (0.0, p["t"].getDoubleValue()));
+    else if (c == "volume") setUserVolume (juce::jlimit (0.0, 1.0, p["v"].getDoubleValue()));
+    else if (c == "loopA" && main != nullptr) main->player.markLoopA();
+    else if (c == "loopB" && main != nullptr) main->player.markLoopB();
+    else if (c == "loopClear" && main != nullptr) main->player.clearLoop();
+    else if (c == "profile")
+    {
+        auto s = eng->getSettings();
+        const auto family = activeFamily (s, eng->getDeviceName());
+        const int i = p["i"].getIntValue();
+        if (family != DeviceFamily::None && i >= 0 && i < familyProfileCount (family))
+        {
+            familySetProfile (s, family, i);
+            eng->setSettings (s);
+            applyEngineSettings();
+            showMessage ("NX Remote : profil "_t + profileName (family, i));
+        }
+    }
+    else if (c == "playAlbum")
+    {
+        const auto tracks = lib.getAlbumTracks (p["artist"], p["album"]);
+        if (! tracks.empty()) playTracks (tracks, 0);
+    }
+    else if (c == "playTrack")
+    {
+        if (auto t = lib.getTrack (p["id"].getLargeIntValue())) playTracks ({ *t }, 0);
+    }
+    if (remoteServer->isRunning()) remoteServer->setState (buildRemoteState());
 }
 
 } // namespace nx

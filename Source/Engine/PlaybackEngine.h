@@ -72,7 +72,8 @@ public:
     void setDevice (const juce::String& deviceName);
     juce::String getDeviceName() const { return deviceName; }
     DeviceCapabilities getCapabilities() const;
-    void setSettings (const EngineSettings& s);
+    /** replanCurrent: the playing track is re-opened with the new settings (from the play position). */
+    void setSettings (const EngineSettings& s, bool replanCurrent = true);
     EngineSettings getSettings() const;
     /** The settings in force for the current device (device profile applied, e.g. Merging Anubis). */
     EngineSettings getEffectiveSettings() const;

@@ -41,6 +41,9 @@ struct EngineSettings
     double maxDsdToPcmRate = 352800.0;
     bool exclusive = true;               // hog mode / WASAPI exclusive
     int bufferMilliseconds = 0;          // 0 = backend default
+    bool memoryPlay = true;              // Memory Play: each local file is copied into RAM, the disk is idle while it plays
+    int memoryPlayMaxMb = 1536;          // larger files are read from the disk
+    bool dspNeedsPcm = false;            // studio tools on: DSD is converted to PCM so that they can apply (not saved)
 
     // Device profiles (see DeviceProfiles.h): resolved against the device name at each track.
     HardwareProfile hardwareProfile = HardwareProfile::Auto;
@@ -76,6 +79,8 @@ struct PlaybackPlan
     juce::String reason;                 // why (shown in the Signal Path)
     FilterShape filterShape = FilterShape::LinearPhase;
     juce::String profileTag;             // active device profile ("Anubis Ref"...), empty if none
+    bool inMemory = false;               // Memory Play: the file is (being) copied into RAM
+    juce::int64 fileBytes = 0;
 
     /** Same device configuration: the boundary between two tracks can be gapless. */
     bool sameWire (const PlaybackPlan& o) const noexcept

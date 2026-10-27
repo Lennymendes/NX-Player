@@ -14,6 +14,10 @@
 #include "../Ext/ThemeEngine.h"
 #include "../Ext/PluginManager.h"
 #include "../Ext/AudioAnalyzer.h"
+#include "../Library/ArtistInfo.h"
+#include "../Remote/RemoteServer.h"
+#include "../DSP/StudioTools.h"
+#include "../Platform/SystemMonitor.h"
 
 namespace nx
 {
@@ -50,6 +54,9 @@ public:
     LibraryScanner& scanner() override         { return *libScanner; }
     AppSettings& settings() override           { return appSettings; }
     DownloadManager& downloads() override      { return *downloadManager; }
+    ArtistInfoService& artistInfo() override   { return *artistInfoService; }
+    RemoteServer& remote() override            { return *remoteServer; }
+    StudioToolsState& studioTools() override   { return *studio; }
 
     void playTracks (const std::vector<TrackInfo>& tracks, int startIndex) override;
     void enqueue (const std::vector<TrackInfo>& tracks) override;
@@ -72,6 +79,22 @@ public:
     void saveNasServers() override;
     const juce::Image& backdrop() override;
     juce::Component* backdropOwner() override;
+    void applyStudioTools() override;
+    void setUserVolume (double v) override;
+    double getUserVolume() override;
+    bool setRemoteEnabled (bool on) override;
+    void setLanguage (const juce::String& code) override;
+    void setLayoutOption (const juce::String& key, const juce::var& value) override;
+    bool isSleepBlocked() override { return sleepBlocker.isActive(); }
+    void showOnboarding() override;
+    void setImmersive (bool on) override;
+    void sendToAuraEngine (const std::vector<TrackInfo>& tracks) override;
+    juce::String networkSourceLabel (const juce::String& source) override;
+
+    /** Remote commands (also used by the tests). Message thread. */
+    void handleRemoteCommand (const juce::String& command, const juce::StringPairArray& params);
+    juce::String buildRemoteState();
+    juce::String buildRemoteLibrary (const juce::StringPairArray& params);
 
     MainComponent* getMainComponent();
     MainWindow* getMainWindow() { return mainWindow.get(); }
@@ -86,6 +109,8 @@ private:
     void saveEngineSettings();
     void updateSystemNowPlaying (bool force);
     void loadEngineSettings();
+    void rebuildDspChain();
+    void applyLayoutSettings();
 
     juce::File dataDir, resourcesDir;
     AppSettings appSettings;
@@ -98,6 +123,11 @@ private:
     std::unique_ptr<ArtworkCache> artworkCache;
     std::unique_ptr<DownloadManager> downloadManager;
     std::unique_ptr<MediaControls> mediaControls;
+    std::unique_ptr<ArtistInfoService> artistInfoService;
+    std::unique_ptr<RemoteServer> remoteServer;
+    std::shared_ptr<StudioToolsState> studio = std::make_shared<StudioToolsState>();
+    SleepBlocker sleepBlocker;
+    double lastRemoteState = 0.0;
     double lastNowPlayingUpdate = 0.0;
     juce::String nowPlayingArtworkSent;
     ThemeManager themeManager;

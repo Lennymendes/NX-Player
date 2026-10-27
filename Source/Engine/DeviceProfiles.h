@@ -38,4 +38,11 @@ juce::String anubisProfileDescription (AnubisProfile p);
 /** Badge text for the player bar: "DSD64 → DXD 352,8 kHz [Anubis Ref]", "PCM 44,1 → DXD [Warm]", "DSD64 DoP [Bit-Perfect]". */
 juce::String pipelineLabel (const PlaybackPlan& plan, const juce::String& qualityName);
 
+/** How the DAC is connected, guessed from its name and driver (dashboard, Signal Path). */
+enum class ConnectionKind { BuiltIn, Network, Usb, Virtual };
+ConnectionKind connectionKind (const juce::String& deviceName, const juce::String& backendName = {});
+juce::String connectionLabel (const juce::String& deviceName, const juce::String& backendName = {});
+/** The family recognised from the name only (drawings), whatever the profile setting. */
+DeviceFamily familyFromName (const juce::String& deviceName);
+
 } // namespace nx

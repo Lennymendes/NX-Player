@@ -26,12 +26,12 @@ void SignalPathView::paint (juce::Graphics& g)
 
     g.setColour (t.textDim());
     g.setFont (style::font (11.5f, true));
-    g.drawText ("CHEMIN DU SIGNAL", r.removeFromTop (18), juce::Justification::centredLeft);
+    g.drawText ("CHEMIN DU SIGNAL"_t, r.removeFromTop (18), juce::Justification::centredLeft);
     if (path.nodes.empty())
     {
         g.setColour (t.textDim());
         g.setFont (style::font (13.0f));
-        g.drawText ("Aucune lecture en cours", r.removeFromTop (24), juce::Justification::centredLeft);
+        g.drawText ("Aucune lecture en cours"_t, r.removeFromTop (24), juce::Justification::centredLeft);
         return;
     }
     auto head = r.removeFromTop (28);
@@ -54,12 +54,18 @@ void SignalPathView::paint (juce::Graphics& g)
             g.setColour (c.withAlpha (0.45f));
             g.fillRect (x - 1.0f, row.getY() + 14.0f, 2.0f, step - 8.0f);
         }
+        // LED: glowing diode in the colour of the stage's quality
+        const auto led = juce::Rectangle<float> (10.0f, 10.0f).withCentre ({ x, row.getY() + 9.0f });
+        g.setGradientFill (juce::ColourGradient (c.withAlpha (0.55f), led.getCentreX(), led.getCentreY(), c.withAlpha (0.0f), led.getCentreX() + 11.0f, led.getCentreY(), true));
+        g.fillEllipse (led.expanded (7.0f));
         g.setColour (c);
-        g.fillEllipse (x - 5.0f, row.getY() + 4.0f, 10.0f, 10.0f);
+        g.fillEllipse (led);
+        g.setColour (juce::Colours::white.withAlpha (0.65f));
+        g.fillEllipse (led.reduced (3.0f).translated (-1.0f, -1.0f));
         auto text = row.withTrimmedLeft (22.0f);
         g.setColour (t.textDim());
         g.setFont (style::font (11.0f, true));
-        g.drawText (style::upper (n.stage), text.removeFromTop (14), juce::Justification::centredLeft);
+        g.drawText (style::upper (tr (n.stage)), text.removeFromTop (14), juce::Justification::centredLeft);
         g.setColour (t.textCol());
         g.setFont (style::font (13.5f, true));
         g.drawText (n.title, text.removeFromTop (17), juce::Justification::centredLeft, true);
@@ -163,7 +169,7 @@ void LyricsView::paint (juce::Graphics& g)
     {
         g.setColour (t.textDim());
         g.setFont (style::font (18.0f, true));
-        g.drawFittedText (statusText.isNotEmpty() ? statusText : juce::String ("Pas de paroles pour ce morceau"),
+        g.drawFittedText (statusText.isNotEmpty() ? statusText : "Pas de paroles pour ce morceau"_t,
                           getLocalBounds().reduced (20), juce::Justification::centredLeft, 3);
         return;
     }
@@ -272,7 +278,7 @@ void NowPlayingPage::paint (juce::Graphics& g)
     {
         g.setColour (t.textDim());
         g.setFont (style::font (18.0f, true));
-        g.drawText ("Rien en lecture", r, juce::Justification::centred);
+        g.drawText ("Rien en lecture"_t, r, juce::Justification::centred);
     }
 }
 

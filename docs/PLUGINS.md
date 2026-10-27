@@ -48,6 +48,7 @@ chaud quand vous l'enregistrez.
 | `nowplaying.side` | page En cours, sous les paroles |
 | `home.top` | page d'accueil, sous le titre |
 | `playerbar.right` | barre de lecture, à droite du badge de qualité (petit) |
+| `immersive.overlay` | vue immersive, en bas à gauche (visualiseurs, informations) |
 | `sidebar.bottom` | bas de la barre latérale |
 
 ### Fonctions appelées
@@ -79,7 +80,7 @@ function render(g, w, h, nx, slot) { }      // à chaque image (fps du manifeste
 | `nx.player` | `{ title, artist, album, duration, position, playing, format }` |
 | `nx.audio` | `{ spectrum[64] (0..1, −90..0 dB, 20 Hz–20 kHz log), rmsL, rmsR, peakL, peakR, scope[256], rate, dsd }` |
 | `nx.theme` | `{ accent, accent2, text, textDim, bg }` |
-| `nx.ui.setLayout({...})` | `playerPosition: "top"\|"bottom"`, `sidebarWidth: px`, `lyrics: bool` |
+| `nx.ui.setLayout({...})` | `playerPosition: "top"\|"bottom"`, `sidebarWidth: px`, `lyrics: bool`, `immersive: { layout, lyrics, waveform, vu, spectrum, tech, artworkScale, motion, blur }` |
 | `nx.console.log(...)` | journal de l'application |
 
 En DSD (natif ou DoP), `nx.audio` décrit la densité du flux 1 bit (`dsd: true`) : les plug-ins voient

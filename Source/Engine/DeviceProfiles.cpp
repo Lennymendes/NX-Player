@@ -228,4 +228,37 @@ juce::String pipelineLabel (const PlaybackPlan& plan, const juce::String& qualit
     return text;
 }
 
+ConnectionKind connectionKind (const juce::String& deviceName, const juce::String& backendName)
+{
+    const auto n = deviceName.toLowerCase();
+    if (isMergingDevice (deviceName) || n.contains ("dante") || n.contains ("network") || n.contains ("airplay") || n.contains ("roon")
+        || n.contains ("ravenna") || n.contains ("aes67"))
+        return ConnectionKind::Network;
+    if (n.contains ("virtuel") || n.contains ("virtual") || n.contains ("silencieuse") || backendName.containsIgnoreCase ("virtuel"))
+        return ConnectionKind::Virtual;
+    for (auto* builtIn : { "built-in", "builtin", "intégré", "internal", "macbook", "imac", "speakers", "haut-parleur", "headphones",
+                           "casque", "hdmi", "displayport", "realtek", "hda intel", "default", "pulse", "pipewire", "mac mini", "studio display" })
+        if (n.contains (juce::String::fromUTF8 (builtIn))) return ConnectionKind::BuiltIn;
+    return ConnectionKind::Usb;
+}
+
+juce::String connectionLabel (const juce::String& deviceName, const juce::String& backendName)
+{
+    switch (connectionKind (deviceName, backendName))
+    {
+        case ConnectionKind::Network: return isMergingDevice (deviceName) ? "Réseau RAVENNA / AES67"_t : "Réseau"_t;
+        case ConnectionKind::BuiltIn: return "Intégré"_t;
+        case ConnectionKind::Virtual: return "Virtuel";
+        case ConnectionKind::Usb:     break;
+    }
+    return "USB";
+}
+
+DeviceFamily familyFromName (const juce::String& deviceName)
+{
+    if (isMergingDevice (deviceName)) return DeviceFamily::Merging;
+    if (isRmeDevice (deviceName)) return DeviceFamily::Rme;
+    return DeviceFamily::None;
+}
+
 } // namespace nx

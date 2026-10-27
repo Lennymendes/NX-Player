@@ -12,6 +12,11 @@
 #include "../Source/GUI/Windows.h"
 #include "../Source/Output/CaptureBackend.h"
 #include "../Source/Platform/MediaControls.h"
+#include "../Source/GUI/LibraryActions.h"
+#include "../Source/GUI/Dashboard.h"
+#include "../Source/Remote/RemoteServer.h"
+#include "../Source/Library/ArtistInfo.h"
+#include "../Source/DSP/StudioTools.h"
 
 using namespace nxtest;
 
@@ -431,7 +436,7 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
     // History (‹ ›) and the sidebar toggle
     app.navigate ({ nx::PageId::Home });
     app.navigate ({ nx::PageId::Albums });
-    app.navigate ({ nx::PageId::Settings });
+    app.navigate ({ nx::PageId::Favourites });
     main->goBack();
     const bool backOk = main->getCurrentPage().page == nx::PageId::Albums;
     main->goBack();
@@ -469,6 +474,240 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         t.check (app.engine().isLoopActive(), "boucle A-B posée depuis l'interface"_t);
         main->player.clearLoop();
     }
+
+    //==========================================================================================
+    // v1.0 interface: sidebar pillars, quality pills, favourites / playlists (drag & drop), artist pages,
+    // NAS badges and clean-up, settings window + dashboard, profile chip, studio tools, immersive view,
+    // onboarding, NX Remote, English.
+    app.artistInfo().setEnabled (false);      // no network in the tests: artist data are stored by hand below
+    auto& sb = main->sidebar;
+    sb.refresh();
+    const int iLocal = sb.findItem (nx::PageId::Library, "albums"), iFav = sb.findItem (nx::PageId::Favourites);
+    const int iPl = sb.findItem (nx::PageId::Playlists), iNas = sb.findItem (nx::PageId::Source, "upnp"), iExt = sb.findItem (nx::PageId::Marketplace);
+    t.check (iLocal >= 0 && iFav > iLocal && iPl > iFav && iNas > iPl && iExt > iNas && sb.findItem (nx::PageId::UserPlugins) < 0,
+             "barre latérale épurée : Local, Favoris, Playlists, NAS / Jellyfin, Extensions & Thèmes"_t);
+
+    auto& listing = main->getListing();
+    auto albumTitles = [&] { juce::StringArray a; for (auto& x : listing.grid.getAlbums()) a.add (x.title); a.sort (true); return a.joinIntoString (", "); };
+    app.navigate ({ nx::PageId::Library, "dxd" });
+    t.check (listing.pills.getNumPills() == 9 && listing.pills.getActive() == "dxd" && albumTitles() == "Nocturnes DXD",
+             "pastille DXD : "_t + albumTitles());
+    t.check (shoot ("19_filtres_qualite") > 40, "barre de filtres par qualité (Albums | Artistes | Pistes | Genres | Ajouts récents | DXD | DSD | Hi-Res | CD)"_t);
+    app.navigate ({ nx::PageId::Library, "dsd" });
+    const auto dsdAlbums = albumTitles();
+    app.navigate ({ nx::PageId::Library, "hires" });
+    const auto hiresAlbums = albumTitles();
+    app.navigate ({ nx::PageId::Library, "cd" });
+    const auto cdAlbums = albumTitles();
+    t.check (dsdAlbums == "Sacred Spaces" && hiresAlbums == "Blue Hour Sessions, Fragments, Neon Roads, Nocturnes DXD" && cdAlbums == "Glass Hours",
+             "DSD : "_t + dsdAlbums + " · Hi-Res : " + hiresAlbums + " · CD : " + cdAlbums);
+    app.navigate ({ nx::PageId::Albums });
+    t.check (listing.pills.isVisible() && listing.pills.getActive() == "albums", "les anciennes vues (Albums...) gardent les pastilles"_t);
+
+    // favourites and playlists by drag & drop on the sidebar
+    const auto neon = app.library().getAlbumTracks ("Zeyn", "Neon Roads");
+    const auto glass = app.library().getAlbumTracks ("Nora Vale", "Glass Hours");
+    t.check (sb.dropTracks ({ neon[0].id, neon[1].id }, iFav) == "favourites" && app.library().getFavouriteTracks().size() == 2,
+             "glisser deux morceaux sur Favoris"_t);
+    app.library().setAlbumFavourite ("Atlas Trio", "Blue Hour Sessions", true);
+    const auto plId = nx::actions::createPlaylistWith (app, "Soirée DXD"_t, { neon[2].id });
+    sb.refresh();
+    const int iMine = sb.findItem (nx::PageId::PlaylistDetail, juce::String (plId));
+    sb.dropTracks (nx::actions::trackIds (glass), iMine);
+    t.check (iMine >= 0 && app.library().getPlaylistTracks (plId).size() == 1 + glass.size(),
+             "glisser un album entier sur une playlist : "_t + juce::String ((int) app.library().getPlaylistTracks (plId).size()) + " morceaux");
+    app.navigate ({ nx::PageId::Favourites });
+    t.check (listing.grid.getAlbums().size() == 1 && listing.list.getTracks().size() == 2, "page Favoris : 1 album, 2 morceaux"_t);
+    t.check (shoot ("20_favoris") > 40, "page Favoris"_t);
+
+    // artist page (data as the TheAudioDB service would store them)
+    {
+        nx::ArtistMeta m;
+        m.name = "Zeyn";
+        m.found = true;
+        m.imageUrl = neon.front().artworkKey;
+        m.bannerUrl = app.library().getAlbumTracks ("Mira Solenne", "Fragments").front().artworkKey;
+        m.bio = "Zeyn est un producteur et ingénieur du son français, figure de la scène électronique « néon ». "
+                "Ses albums, enregistrés en DXD 352,8 kHz puis mastérisés en DSD, explorent les nuits urbaines et les longues routes.\n\n"
+                "Neon Roads, sorti en 2024, a été mixé sur AuraDAW et converti avec AuraEngine. "
+                "Sur scène, il joue sur une Merging Anubis reliée en RAVENNA à un système de diffusion multicanal."_t;
+        m.bioSource = "TheAudioDB";
+        m.genre = "Electronic";
+        m.country = "Paris, France";
+        m.fetched = juce::Time::currentTimeMillis();
+        app.library().setArtistMeta (m);
+    }
+    app.navigate ({ nx::PageId::ArtistDetail, "Zeyn" });
+    t.check (listing.artistHeader.isVisible() && listing.artistHeader.hasBio() && listing.artistHeader.hasPhoto() && ! listing.grid.getAlbums().empty(),
+             "page artiste : bannière, photo, biographie et discographie de la bibliothèque"_t);
+    t.check (shoot ("21_page_artiste") > 60, "page artiste"_t);
+    app.navigate ({ nx::PageId::Library, "artistes" });
+    t.check (listing.grid.roundArt && listing.grid.getAlbums().size() == 6, "vue Artistes en médaillons ronds"_t);
+    shoot ("22_artistes");
+
+    // NAS: import the server's album, badge, clean-up
+    if (upnp != nullptr && ! nasServers.empty())
+    {
+        const int imported = upnp->importContainer (app.library(), nasServers[0], "a0");
+        app.navigate ({ nx::PageId::Albums });
+        nx::AlbumInfo neonAlbum;
+        for (auto& a : listing.grid.getAlbums()) if (a.title == "Neon Roads") neonAlbum = a;
+        t.check (imported == 4 && neonAlbum.fromNas() && app.networkSourceLabel (neonAlbum.nasSource) == "NAS",
+                 "album importé du NAS : badge « NAS » à côté du format"_t);
+        t.check (shoot ("23_badges_nas") > 40, "badges NAS sur les pochettes"_t);
+        const int removed = nx::actions::removeNasAlbums (app, { neonAlbum });
+        bool stillLocal = false;
+        for (auto& a : app.library().getAlbums ("artist", 100)) if (a.title == "Neon Roads") stillLocal = ! a.fromNas();
+        t.check (removed == 4 && stillLocal, "« Retirer de la bibliothèque » : les 4 morceaux du NAS partent, l'album local reste"_t);
+        upnp->importContainer (app.library(), nasServers[0], "a0");
+        const int purged = nx::actions::purgeNas (app);
+        t.check (purged == 4 && app.library().countAlbumsFromSourcePrefix ("upnp") == 0, "« Purger les éléments du NAS » depuis les réglages"_t);
+    }
+
+    // Settings window (modal) with the hardware dashboard; the virtual DAC is renamed as a Merging Anubis
+    const auto originalDac = virtualDac->name;
+    virtualDac->name = "MT VAD (Merging Anubis Premium)";
+    app.selectDevice (virtualDac->name);
+    app.navigate ({ nx::PageId::Settings, "audio" });
+    auto& sw = main->getSettingsWindow();
+    t.check (sw.isOpen() && sw.getTab() == "audio" && main->getCurrentPage().page != nx::PageId::Settings,
+             "Réglages : fenêtre modale par-dessus la page (roue crantée), onglet Audio & Système"_t);
+    t.check (shoot ("24_tableau_de_bord") > 60, "tableau de bord ORDINATEUR ↔ PÉRIPHÉRIQUE AUDIO (Anubis)"_t);
+    {
+        nx::DeviceCapabilities caps;
+        caps.sampleRates = { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 };
+        using RS = nx::HardwareDashboard::RateSupport;
+        const bool matrix = nx::HardwareDashboard::supportFor (caps, 176400.0, false) == RS::Pcm && nx::HardwareDashboard::supportFor (caps, 384000.0, false) == RS::None
+                         && nx::HardwareDashboard::supportFor (caps, 2822400.0, true) == RS::DoP && nx::HardwareDashboard::supportFor (caps, 5644800.0, true) == RS::None;
+        caps.nativeDsdRates = { 11289600.0 };
+        t.check (matrix && nx::HardwareDashboard::supportFor (caps, 11289600.0, true) == RS::Native,
+                 "matrice des fréquences : PCM, DSD en DoP (176,4 kHz -> DSD64) et DSD natif"_t);
+    }
+    sw.getPage().setTab ("bibliotheque");
+    shoot ("25_reglages_bibliotheque");
+    sw.getPage().setTab ("interface");
+    t.check (shoot ("26_reglages_interface") > 30, "onglet Interface : langue, thème, disposition, vue immersive, relancer l'assistant"_t);
+    app.setRemoteEnabled (true);
+    sw.getPage().setTab ("remote");
+    t.check (app.remote().isRunning() && shoot ("27_nx_remote") > 30, "NX Remote activé : QR code et lien"_t);
+    {
+        const auto state = juce::JSON::parse (app.buildRemoteState());
+        t.check (state.getProperty ("family", {}).toString() == "merging" && state.getProperty ("profiles", {}).size() == 3,
+                 "état NX Remote : morceau, volume, profils Anubis ("_t + state.getProperty ("device", {}).toString() + ")");
+        juce::StringPairArray p;
+        p.set ("v", "0.5");
+        app.handleRemoteCommand ("volume", p);
+        const double v = app.getUserVolume();
+        p.set ("i", "2");
+        app.handleRemoteCommand ("profile", p);
+        const bool pureDop = app.engine().getSettings().anubisProfile == nx::AnubisProfile::PureDoP;
+        p.set ("v", "1");
+        app.handleRemoteCommand ("volume", p);
+        t.check (std::abs (v - 0.5) < 0.01 && pureDop && app.engine().isFixedVolume(), "NX Remote : volume à 50 %, profil Pure DoP depuis le téléphone, retour à 100 % bit-perfect"_t);
+    }
+    app.setRemoteEnabled (false);
+    sw.close();
+
+    // Profile chip of the player bar
+    {
+        auto& chip = main->player.deviceChip;
+        auto entries = chip.menuEntries();
+        chip.selectEntry (1);
+        const bool warm = app.engine().getSettings().anubisProfile == nx::AnubisProfile::AnalogWarmth;
+        t.check (entries.size() == 3 && warm, "barre de lecture : miniature de l'Anubis et menu des 3 profils (Analog Warmth activé)"_t);
+        chip.selectEntry (0);
+    }
+
+    // Studio tools from the player bar menu
+    app.playTracks (neon, 0);
+    settle (500);
+    app.studioTools().monitor = nx::StudioToolsState::Monitor::Mono;
+    app.studioTools().invertPhase = true;
+    app.applyStudioTools();
+    settle (300);
+    {
+        bool tools = false;
+        for (auto& n : app.engine().getSignalPath().nodes) tools |= n.stage == "DSP" && n.title.contains ("Mono") && n.title.contains ("Phase");
+        t.check (tools && app.engine().getSettings().dspNeedsPcm && main->player.studioButton.active,
+                 "Outils Studio (mono + phase) : dans la chaîne et le chemin du signal, DSD converti tant qu'ils sont actifs"_t);
+    }
+    shoot ("28_outils_studio");
+    app.studioTools().monitor = nx::StudioToolsState::Monitor::Stereo;
+    app.studioTools().invertPhase = false;
+    app.applyStudioTools();
+    t.check (! app.engine().getSettings().dspNeedsPcm, "outils éteints : retour au bit-perfect"_t);
+
+    // Immersive view, modular: theme (CSS + immersive.json), settings, plug-ins
+    app.setImmersive (true);
+    for (int i = 0; i < 40 && ! main->getImmersive().hasWaveform(); ++i) settle (50);
+    t.check (main->isImmersive() && main->getImmersive().getPalette().size() == 4 && main->getImmersive().hasWaveform(),
+             "vue immersive : 4 couleurs extraites de la pochette, forme d'onde calculée"_t);
+    t.check (shoot ("29_vue_immersive") > 60, "vue immersive (fond animé, pochette HD, paroles, forme d'onde)"_t);
+    {
+        auto folder = app.userDataDirectory().getChildFile ("Themes/immersive-test.nxtheme");
+        folder.createDirectory();
+        folder.getChildFile ("manifest.json").replaceWithText (R"({ "id": "immersive-test", "name": "Immersive Test", "stylesheet": "theme.css" })");
+        folder.getChildFile ("theme.css").replaceWithText (":root { --nx-accent: #FF2A6D; --nx-immersive-layout: centered; --nx-immersive-vu: on; --nx-immersive-artwork-scale: 0.9; }");
+        folder.getChildFile ("immersive.json").replaceWithText (R"({ "spectrum": true, "motion": 1.5 })");
+        app.themes().rescan();
+        app.applyTheme ("immersive-test");
+        auto c = nx::ImmersiveConfig::resolve (app);
+        const bool fromTheme = c.layout == "centered" && c.vu && c.spectrum && std::abs (c.motion - 1.5f) < 0.01f && c.source.contains ("th");
+        main->getImmersive().refreshConfig();
+        shoot ("30_vue_immersive_theme");
+        auto userImm = juce::var (new juce::DynamicObject());
+        userImm.getDynamicObject()->setProperty ("layout", "minimal");
+        app.settings().set ("immersive", userImm);
+        c = nx::ImmersiveConfig::resolve (app);
+        const bool fromSettings = c.layout == "minimal" && c.vu;
+        auto pluginImm = juce::var (new juce::DynamicObject());
+        pluginImm.getDynamicObject()->setProperty ("lyrics", false);
+        app.layout.getDynamicObject()->setProperty ("immersive", pluginImm);
+        c = nx::ImmersiveConfig::resolve (app);
+        const bool fromPlugin = ! c.lyrics && c.source == "plug-in";
+        t.check (fromTheme && fromSettings && fromPlugin, "disposition modulable : thème (CSS + immersive.json), puis réglages, puis plug-ins"_t);
+        app.layout.getDynamicObject()->removeProperty ("immersive");
+        app.settings().set ("immersive", juce::var (new juce::DynamicObject()));
+        app.applyTheme ("nx-emerald");
+    }
+    app.setImmersive (false);
+    t.check (! main->isImmersive(), "Échap / bouton : sortie de la vue immersive"_t);
+
+    // Onboarding assistant (first launch, or Réglages › Interface)
+    app.showOnboarding();
+    auto& ob = main->getOnboarding();
+    t.check (ob.isVisible() && ob.getStep() == 0, "assistant de premier démarrage affiché"_t);
+    shoot ("31_assistant_langue_theme");
+    ob.clickTile ("lang", "en");
+    const bool en = nx::i18n::isEnglish() && "Réglages"_t == "Settings";
+    shoot ("32_assistant_english");
+    ob.clickTile ("lang", "fr");
+    t.check (en && ! nx::i18n::isEnglish(), "étape 1 : langue anglais / français appliquée à chaud"_t);
+    ob.setStep (1);
+    ob.clickTile ("layout", "compact");
+    settle (100);
+    const bool compact = main->sidebar.isCompact();
+    shoot ("33_assistant_disposition");
+    ob.clickTile ("layout", "cider");
+    t.check (compact && ! main->sidebar.isCompact(), "étape 2 : disposition compacte (icônes) puis Cider 2 étendue"_t);
+    ob.setStep (2);
+    ob.clickTile ("profile", "0");
+    t.check (app.engine().getSettings().anubisProfile == nx::AnubisProfile::StudioDxdReference, "étape 3 : Anubis détectée, profil optimal activé en un clic"_t);
+    t.check (shoot ("34_assistant_materiel") > 40, "étape 3 : dessin de la Merging Anubis"_t);
+    ob.setStep (3);
+    shoot ("35_assistant_sources");
+    ob.finish();
+    t.check (! ob.isVisible() && (bool) app.settings().get ("onboardingDone", false), "fin de l'assistant : mémorisé (il ne revient plus seul)"_t);
+
+    // Compact sidebar and the English interface
+    app.setLayoutOption ("sidebar", "compact");
+    app.setLanguage ("en");
+    app.navigate ({ nx::PageId::Library, "albums" });
+    t.check (shoot ("36_interface_anglais_compacte") > 40 && "Favoris"_t == "Favourites", "interface en anglais, barre latérale compacte"_t);
+    app.setLanguage ("fr");
+    app.setLayoutOption ("sidebar", "wide");
+    virtualDac->name = originalDac;
+    app.selectDevice (originalDac);
 
     // mini player
     nx::MiniPlayer mini (app);

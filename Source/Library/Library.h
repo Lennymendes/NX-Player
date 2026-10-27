@@ -52,10 +52,27 @@ struct AlbumInfo
     bool hasDsd = false, lossy = false;
     double duration = 0.0;
     juce::int64 added = 0;
+    juce::String nasSource;            // "upnp:<uuid>" when (part of) the album comes from a NAS / Jellyfin server
+    bool favourite = false;
+    juce::String genre;
     juce::String badge() const;
+    bool fromNas() const { return nasSource.isNotEmpty(); }
 };
 
 struct ArtistInfo { juce::String name; int albumCount = 0, trackCount = 0; juce::String artworkKey; };
+
+/** Online artist information (photo, banner, biography), cached in the database. */
+struct ArtistMeta
+{
+    juce::String name, imageUrl, bannerUrl, bio, bioSource, country, genre;
+    juce::int64 fetched = 0;                 // ms since epoch, 0 = never
+    bool found = false;
+};
+
+struct GenreInfo { juce::String name; int albumCount = 0, trackCount = 0; juce::String artworkKey; };
+
+/** Quality filters of the library pills (Audirvana style). */
+enum class QualityFilter { Any, Dxd, Dsd, HiRes, Cd };
 
 struct PlaylistInfo { juce::int64 id = 0; juce::String name, source, externalId; int trackCount = 0; };
 
@@ -88,12 +105,43 @@ public:
     //== Derived views ========================================================
     std::vector<AlbumInfo> getAlbums (const juce::String& orderBy = "added", int limit = 2000, const juce::String& sourceFilter = {});
     std::vector<ArtistInfo> getArtists (int limit = 5000);
+    /** Albums with at least one track matching the quality filter (and the genre, if given). */
+    std::vector<AlbumInfo> getAlbumsFiltered (QualityFilter q, const juce::String& genre = {}, const juce::String& orderBy = "artist", int limit = 5000);
+    std::vector<TrackInfo> getTracksFiltered (QualityFilter q, const juce::String& genre = {}, int limit = 20000);
+    int countTracksFiltered (QualityFilter q);
+    std::vector<GenreInfo> getGenres();
+    static juce::String qualityCondition (QualityFilter q);   // SQL condition on the tracks table
+
+    //== Favourites ===========================================================
+    std::vector<TrackInfo> getFavouriteTracks();
+    std::vector<AlbumInfo> getFavouriteAlbums();
+    void setAlbumFavourite (const juce::String& artist, const juce::String& album, bool fav);
+    bool isAlbumFavourite (const juce::String& artist, const juce::String& album);
+
+    //== Removal (NAS clean-up) ===============================================
+    /** Removes an album's tracks from the library (only those whose source starts with sourcePrefix, if given). */
+    int removeAlbum (const juce::String& artist, const juce::String& album, const juce::String& sourcePrefix = {});
+    /** Removes every track whose source starts with prefix ("upnp" = everything imported from NAS servers). */
+    int removeSourcePrefix (const juce::String& prefix);
+    /** Removes the tracks of the NAS servers ("upnp:<udn>") that are not in available. */
+    int removeNasSourcesExcept (const juce::StringArray& availableSources);
+    juce::StringArray getSources (const juce::String& prefix);
+    int countAlbumsFromSourcePrefix (const juce::String& prefix);
+
+    //== Artist information ===================================================
+    std::optional<ArtistMeta> getArtistMeta (const juce::String& name);
+    void setArtistMeta (const ArtistMeta& meta);
 
     //== Playlists ============================================================
     juce::int64 createPlaylist (const juce::String& name, const juce::String& source = "local", const juce::String& externalId = {});
     void setPlaylistTracks (juce::int64 playlistId, const std::vector<juce::int64>& trackIds);
     std::vector<PlaylistInfo> getPlaylists();
     std::vector<TrackInfo> getPlaylistTracks (juce::int64 playlistId);
+    /** Appends tracks (ids) at the end of a playlist. Returns how many were added. */
+    int appendToPlaylist (juce::int64 playlistId, const std::vector<juce::int64>& trackIds);
+    void removeFromPlaylist (juce::int64 playlistId, int position);
+    void deletePlaylist (juce::int64 playlistId);
+    void renamePlaylist (juce::int64 playlistId, const juce::String& name);
 
     //== Folders & history ====================================================
     void addFolder (const juce::File& folder, const juce::String& kind = "local");

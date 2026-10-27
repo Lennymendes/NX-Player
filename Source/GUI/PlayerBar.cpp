@@ -3,28 +3,37 @@
 #include "../Engine/DeviceProfiles.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Ext/PluginManager.h"
+#include "../DSP/StudioTools.h"
+#include "DeviceArt.h"
 
 namespace nx
 {
 
 PlayerBar::PlayerBar (AppContext& c)
-    : lyricsButton (style::Icon::Lyrics, "Paroles", c),
+    : lyricsButton (style::Icon::Lyrics, "Paroles"_t, c),
       queueButton (style::Icon::Queue, "File d'attente"_t, c),
+      studioButton (style::Icon::Studio, "Outils Studio : mono, Mid / Side, phase, crossfeed"_t, c),
+      immersiveButton (style::Icon::Fullscreen, "Vue immersive (F)"_t, c),
+      deviceChip (c),
       ctx (c), artwork (c, 128),
       shuffleButton (style::Icon::Shuffle, "Aléatoire"_t, c),
       prevButton (style::Icon::Previous, "Précédent"_t, c),
-      playButton (style::Icon::Play, "Lecture / pause", c),
-      nextButton (style::Icon::Next, "Suivant", c),
+      playButton (style::Icon::Play, "Lecture / pause"_t, c),
+      nextButton (style::Icon::Next, "Suivant"_t, c),
       repeatButton (style::Icon::Repeat, "Répéter"_t, c),
       miniButton (style::Icon::Mini, "Mini-lecteur"_t, c),
-      volumeButton (style::Icon::Volume, "Volume (100 % = bit-perfect)", c),
+      volumeButton (style::Icon::Volume, "Volume (100 % = bit-perfect)"_t, c),
       seek (c), loopButton (c), badge (c), pluginSlot (c, "playerbar.right", true)
 {
     artwork.cornerRadius = 8.0f;
     artwork.shadow = false;
     playButton.primary = true;
-    for (auto* b : { &shuffleButton, &prevButton, &playButton, &nextButton, &repeatButton, &lyricsButton, &queueButton, &miniButton, &volumeButton })
+    for (auto* b : { &shuffleButton, &prevButton, &playButton, &nextButton, &repeatButton, &lyricsButton, &queueButton, &miniButton, &volumeButton,
+                     &studioButton, &immersiveButton })
         addAndMakeVisible (b);
+    addAndMakeVisible (deviceChip);
+    studioButton.onClick = [this] { showStudioMenu(); };
+    immersiveButton.onClick = [this] { if (onImmersive) onImmersive(); };
     addAndMakeVisible (artwork);
     addAndMakeVisible (seek);
     addAndMakeVisible (loopButton);
@@ -106,7 +115,7 @@ void PlayerBar::resized()
     const int third = getWidth() / 3;
     textArea = r.removeFromLeft (juce::jmax (120, third - r.getHeight() - 40));
 
-    auto right = r.removeFromRight (juce::jmin (third - 20, 380));
+    auto right = r.removeFromRight (juce::jmin (third + 40, 470));
     auto center = r.reduced (8, 0);
 
     // center: transport row + seek bar
@@ -126,20 +135,25 @@ void PlayerBar::resized()
     loopButton.setBounds (controls.removeFromLeft (44));
     seek.setBounds (center.withSizeKeepingCentre (juce::jmin (center.getWidth(), 620), center.getHeight()));
 
-    // right: badge / plug-ins / buttons / volume
+    // right: badge + device chip / plug-ins, then buttons / volume
     auto top = right.removeFromTop (right.getHeight() / 2);
     {
         // wide enough for the pipeline label ("DSD64 → DXD 352,8 kHz [Anubis Ref]")
         const int wanted = juce::roundToInt (juce::GlyphArrangement::getStringWidth (style::font (12.0f, true), badge.getLabel())) + 48;
-        badge.setBounds (top.removeFromLeft (juce::jlimit (150, juce::jmax (150, top.getWidth() - 96), juce::jmax (190, wanted))).reduced (0, 4));
+        const int chipW = juce::jmin (150, juce::jmax (100, top.getWidth() / 3));
+        deviceChip.setBounds (top.removeFromRight (chipW).reduced (0, 3));
+        top.removeFromRight (6);
+        badge.setBounds (top.removeFromLeft (juce::jlimit (120, juce::jmax (120, top.getWidth()), juce::jmax (170, wanted))).reduced (0, 4));
     }
     top.removeFromLeft (6);
-    pluginSlot.setVisible (! pluginSlot.isEmpty());
+    pluginSlot.setVisible (! pluginSlot.isEmpty() && top.getWidth() > 40);
     pluginSlot.setBounds (top.reduced (0, 2));
     const int ib = right.getHeight();
     miniButton.setBounds (right.removeFromRight (ib));
+    immersiveButton.setBounds (right.removeFromRight (ib));
     queueButton.setBounds (right.removeFromRight (ib));
     lyricsButton.setBounds (right.removeFromRight (ib));
+    studioButton.setBounds (right.removeFromRight (ib));
     volumeButton.setBounds (right.removeFromLeft (ib));
     volume.setBounds (right.reduced (4, 0));
 }
@@ -238,6 +252,9 @@ void PlayerBar::stateChanged()
                                   : juce::String ("Volume numérique 64 bits. À 100 %, le flux reste bit-perfect."_t));
     }
     lyricsButton.repaint();
+    studioButton.active = ctx.studioTools().anyActive();
+    studioButton.repaint();
+    deviceChip.repaint();
 }
 
 void PlayerBar::timerCallback()
@@ -246,6 +263,118 @@ void PlayerBar::timerCallback()
     double dur = e.getDurationSeconds();
     if (const auto* t = ctx.currentTrack()) if (dur <= 0) dur = t->duration;
     seek.setPosition (e.getPositionSeconds(), dur);
+}
+
+void PlayerBar::setVolumeLevel (double v)
+{
+    if (volume.isEnabled()) volume.setValue (juce::jlimit (0.0, 1.0, v), juce::sendNotificationSync);
+}
+
+void PlayerBar::showStudioMenu()
+{
+    auto& st = ctx.studioTools();
+    using M = StudioToolsState::Monitor;
+    juce::PopupMenu m;
+    m.addSectionHeader ("Outils Studio (64 bits)"_t);
+    auto setMonitor = [this] (M mode) { auto& s = ctx.studioTools(); s.monitor = s.monitor.load() == mode ? M::Stereo : mode; ctx.applyStudioTools(); studioButton.active = s.anyActive(); studioButton.repaint(); };
+    m.addItem ("Mono (L+R)"_t, true, st.monitor.load() == M::Mono, [setMonitor] { setMonitor (M::Mono); });
+    m.addItem ("Solo Mid (M)", true, st.monitor.load() == M::MidSolo, [setMonitor] { setMonitor (M::MidSolo); });
+    m.addItem ("Solo Side (S)", true, st.monitor.load() == M::SideSolo, [setMonitor] { setMonitor (M::SideSolo); });
+    m.addSeparator();
+    m.addItem (juce::String::fromUTF8 ("Inversion de phase (\xc3\x98)"), true, st.invertPhase.load(), [this]
+    {
+        auto& s = ctx.studioTools(); s.invertPhase = ! s.invertPhase.load(); ctx.applyStudioTools(); studioButton.active = s.anyActive(); studioButton.repaint();
+    });
+    m.addItem ("Smart Crossfeed (casque)"_t, true, st.crossfeed.load(), [this]
+    {
+        auto& s = ctx.studioTools(); s.crossfeed = ! s.crossfeed.load(); ctx.applyStudioTools(); studioButton.active = s.anyActive(); studioButton.repaint();
+    });
+    m.addSeparator();
+    m.addItem ("Tout désactiver (retour au bit-perfect)"_t, st.anyActive(), false, [this]
+    {
+        auto& s = ctx.studioTools(); s.monitor = M::Stereo; s.invertPhase = false; s.crossfeed = false; ctx.applyStudioTools(); studioButton.active = false; studioButton.repaint();
+    });
+    if (const auto* t = ctx.currentTrack())
+    {
+        m.addSeparator();
+        const auto track = *t;
+        m.addItem ("Analyser / Convertir dans AuraEngine X"_t, [this, track] { ctx.sendToAuraEngine ({ track }); });
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&studioButton));
+}
+
+//==============================================================================
+std::vector<std::pair<juce::String, bool>> DeviceChip::menuEntries() const
+{
+    std::vector<std::pair<juce::String, bool>> out;
+    const auto s = ctx.engine().getSettings();
+    const auto family = activeFamily (s, ctx.engine().getDeviceName());
+    if (family == DeviceFamily::None)
+    {
+        const bool convert = s.dsdMode == DsdMode::ConvertToPcm;
+        out.push_back ({ "Bit-Perfect (DSD natif / DoP)"_t, ! convert && ! s.upsampleToDxd });
+        out.push_back ({ "DSD -> DXD 352,8 kHz"_t, convert });
+        out.push_back ({ "Suréchantillonnage DXD"_t, s.upsampleToDxd });
+        return out;
+    }
+    const int current = familyCurrentProfile (s, family);
+    for (int i = 0; i < familyProfileCount (family); ++i) out.push_back ({ profileName (family, i), i == current });
+    return out;
+}
+
+void DeviceChip::selectEntry (int index)
+{
+    auto s = ctx.engine().getSettings();
+    const auto family = activeFamily (s, ctx.engine().getDeviceName());
+    if (family == DeviceFamily::None)
+    {
+        s.dsdMode = index == 1 ? DsdMode::ConvertToPcm : DsdMode::Auto;
+        s.upsampleToDxd = index == 2;
+    }
+    else familySetProfile (s, family, index);
+    ctx.engine().setSettings (s);
+    ctx.applyEngineSettings();
+    const auto entries = menuEntries();
+    if (index >= 0 && index < (int) entries.size()) ctx.showMessage ("Profil : "_t + entries[(size_t) index].first);
+    repaint();
+}
+
+void DeviceChip::showMenu()
+{
+    const auto device = ctx.engine().getDeviceName();
+    const auto family = activeFamily (ctx.engine().getSettings(), device);
+    juce::PopupMenu m;
+    m.addSectionHeader (device.isNotEmpty() ? device : juce::String ("Aucun périphérique"_t));
+    const auto entries = menuEntries();
+    for (int i = 0; i < (int) entries.size(); ++i)
+        m.addItem (entries[(size_t) i].first, true, entries[(size_t) i].second, [this, i] { selectEntry (i); });
+    m.addSeparator();
+    m.addItem ("Réglages audio…"_t, [this] { ctx.navigate ({ PageId::Settings, "audio" }); });
+    juce::ignoreUnused (family);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this));
+}
+
+void DeviceChip::paint (juce::Graphics& g)
+{
+    const auto& t = ctx.theme();
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const auto device = ctx.engine().getDeviceName();
+    const auto s = ctx.engine().getSettings();
+    const auto family = familyFromName (device) != DeviceFamily::None ? familyFromName (device) : activeFamily (s, device);
+    g.setColour (juce::Colours::white.withAlpha (isMouseOver() ? 0.12f : 0.06f));
+    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+    g.setColour (t.border().withMultipliedAlpha (1.5f));
+    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+    auto glyph = r.removeFromLeft (r.getHeight() * 1.4f).reduced (6.0f, 3.0f);
+    deviceart::drawGlyph (g, family, glyph, t.accent());
+    style::drawIcon (g, style::Icon::ChevronDown, r.removeFromRight (r.getHeight()).reduced (r.getHeight() * 0.3f), t.textDim());
+    const auto activeFam = activeFamily (s, device);
+    juce::String text;
+    if (activeFam != DeviceFamily::None) text = profileTag (activeFam, familyCurrentProfile (s, activeFam));
+    else text = s.dsdMode == DsdMode::ConvertToPcm ? juce::String ("DSD -> DXD") : s.upsampleToDxd ? juce::String ("DXD") : juce::String ("Bit-Perfect");
+    g.setColour (t.textCol());
+    g.setFont (style::font (11.5f, true));
+    g.drawText (text, r, juce::Justification::centredLeft, true);
 }
 
 } // namespace nx

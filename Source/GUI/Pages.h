@@ -5,6 +5,7 @@
 #include "Widgets.h"
 #include "../Providers/MediaProvider.h"
 #include "../Providers/UpnpProvider.h"
+#include "../Library/ArtistInfo.h"
 #include <map>
 
 namespace nx
@@ -29,8 +30,35 @@ public:
     PluginSlot* topSlot = nullptr;
     juce::String ctaText;               // empty-state call to action
     std::function<void()> ctaAction;
+    PillBar pills;                      // library filters (shown when it has pills)
+    bool showPills = false;
+    juce::String artistName;            // artist page: banner, photo and biography
+
+    /** Artist page header (photo, banner, biography from TheAudioDB / Wikipedia). */
+    class ArtistHeader : public juce::Component, private juce::ChangeListener
+    {
+    public:
+        explicit ArtistHeader (ListingPage& p);
+        ~ArtistHeader() override;
+        void setArtist (const juce::String& name, int albums, int tracks);
+        int heightForWidth (int width) const;
+        void paint (juce::Graphics&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        bool hasBio() const { return meta.has_value() && meta->bio.isNotEmpty(); }
+        bool hasPhoto() const { return meta.has_value() && meta->imageUrl.isNotEmpty(); }
+    private:
+        void changeListenerCallback (juce::ChangeBroadcaster*) override;
+        ListingPage& page;
+        juce::String name;
+        int albumCount = 0, trackCount = 0;
+        std::optional<ArtistMeta> meta;
+        bool expanded = false;
+        juce::Rectangle<int> moreButton;
+    };
+    ArtistHeader artistHeader { *this };
 
 private:
+    std::unique_ptr<juce::Component> captionOwner;
     void changeListenerCallback (juce::ChangeBroadcaster*) override { contentComp.repaint(); }
     struct Header : juce::Component { ListingPage& page; explicit Header (ListingPage& p) : page (p) {} void paint (juce::Graphics&) override; };
     Header header { *this };
@@ -73,6 +101,12 @@ public:
     explicit SettingsPage (AppContext& c);
     void layoutContent (int width) override;
     void refresh() override;
+    /** audio | bibliotheque | interface | remote | outils | apropos */
+    void setTab (const juce::String& t) { tab = t; refresh(); viewport.setViewPosition (0, 0); }
+    juce::String getTab() const { return tab; }
+    static juce::StringArray tabIds();
+    static juce::StringArray tabLabels();
+    bool embedded = false;            // inside the settings window (no page title)
 
 private:
     void section (const juce::String& title);
@@ -84,6 +118,13 @@ private:
     struct Labels : juce::Component { SettingsPage& p; explicit Labels (SettingsPage& s) : p (s) { setInterceptsMouseClicks (false, false); } void paint (juce::Graphics&) override; };
     Labels labels { *this };
     std::vector<std::pair<juce::Rectangle<int>, Row>> painted;
+    juce::String tab { "audio" };
+    void buildAudio();
+    void buildLibrary();
+    void buildInterface();
+    void buildRemote();
+    void buildTools();
+    void buildAbout();
 };
 
 } // namespace nx

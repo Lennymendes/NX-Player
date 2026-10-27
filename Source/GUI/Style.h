@@ -90,7 +90,8 @@ inline juce::String formatTime (double seconds)
 /** Vector icons (24 × 24 design grid, scaled into r). */
 enum class Icon { Play, Pause, Next, Previous, Shuffle, Repeat, Volume, VolumeMute, Lyrics, Queue, Mini, Home, Search, Clock,
                   Album, Artist, Song, Playlist, Folder, Network, Cloud, Settings, Heart, Plus, Close, Expand, Signal, Theme, Plugin,
-                  ChevronLeft, ChevronRight, SidebarToggle, Grid, Download, Trash };
+                  ChevronLeft, ChevronRight, SidebarToggle, Grid, Download, Trash,
+                  Phone, Studio, Fullscreen, Lock, FolderPlus, HeartOutline, Check, Globe, Waveform, ChevronDown, Library };
 
 inline juce::Path iconPath (Icon icon)
 {
@@ -155,6 +156,22 @@ inline juce::Path iconPath (Icon icon)
                              p.startNewSubPath (5, 19.5f); p.lineTo (19, 19.5f); break;
         case Icon::Trash:    p.startNewSubPath (4, 6.5f); p.lineTo (20, 6.5f); p.startNewSubPath (9.5f, 6.5f); p.lineTo (10, 4); p.lineTo (14, 4); p.lineTo (14.5f, 6.5f);
                              p.startNewSubPath (6, 6.5f); p.lineTo (7, 20); p.lineTo (17, 20); p.lineTo (18, 6.5f); break;
+        case Icon::Phone:    p.addRoundedRectangle (6.5f, 2.5f, 11, 19, 2.5f); p.startNewSubPath (10.5f, 18.5f); p.lineTo (13.5f, 18.5f); break;
+        case Icon::Studio:   for (int i = 0; i < 3; ++i) { const float x = 6.0f + i * 6.0f; p.startNewSubPath (x, 4); p.lineTo (x, 20); }
+                             p.addRoundedRectangle (4, 13, 4, 3, 1); p.addRoundedRectangle (10, 7, 4, 3, 1); p.addRoundedRectangle (16, 11, 4, 3, 1); break;
+        case Icon::Fullscreen: p.startNewSubPath (3.5f, 9); p.lineTo (3.5f, 3.5f); p.lineTo (9, 3.5f); p.startNewSubPath (15, 3.5f); p.lineTo (20.5f, 3.5f); p.lineTo (20.5f, 9);
+                               p.startNewSubPath (20.5f, 15); p.lineTo (20.5f, 20.5f); p.lineTo (15, 20.5f); p.startNewSubPath (9, 20.5f); p.lineTo (3.5f, 20.5f); p.lineTo (3.5f, 15);
+                               p.addRoundedRectangle (8, 8, 8, 8, 1.5f); break;
+        case Icon::Lock:     p.addRoundedRectangle (5, 10.5f, 14, 10, 2); p.startNewSubPath (8, 10.5f); p.lineTo (8, 7.5f); p.cubicTo (8, 2.5f, 16, 2.5f, 16, 7.5f); p.lineTo (16, 10.5f); break;
+        case Icon::FolderPlus: p.startNewSubPath (3, 7); p.lineTo (3, 19); p.lineTo (21, 19); p.lineTo (21, 9); p.lineTo (11, 9); p.lineTo (9, 6); p.lineTo (3, 6); p.closeSubPath();
+                               p.startNewSubPath (12, 11.5f); p.lineTo (12, 16.5f); p.startNewSubPath (9.5f, 14); p.lineTo (14.5f, 14); break;
+        case Icon::HeartOutline: p.startNewSubPath (12, 20); p.cubicTo (2, 13, 3, 4, 9, 5); p.cubicTo (10.5f, 5.3f, 11.5f, 6.5f, 12, 7.5f);
+                                 p.cubicTo (12.5f, 6.5f, 13.5f, 5.3f, 15, 5); p.cubicTo (21, 4, 22, 13, 12, 20); p.closeSubPath(); break;
+        case Icon::Check:    p.startNewSubPath (5, 12.5f); p.lineTo (10, 17.5f); p.lineTo (19, 6.5f); break;
+        case Icon::Globe:    p.addEllipse (3.5f, 3.5f, 17, 17); p.addEllipse (8.5f, 3.5f, 7, 17); p.startNewSubPath (3.5f, 12); p.lineTo (20.5f, 12); break;
+        case Icon::Waveform: for (int i = 0; i < 9; ++i) { const float h = 3.0f + 7.0f * std::abs (std::sin ((float) i * 1.3f)); p.startNewSubPath (4.0f + i * 2.0f, 12 - h); p.lineTo (4.0f + i * 2.0f, 12 + h); } break;
+        case Icon::ChevronDown: p.startNewSubPath (6, 9); p.lineTo (12, 15); p.lineTo (18, 9); break;
+        case Icon::Library:  p.addRoundedRectangle (3.5f, 4, 4, 16, 1); p.addRoundedRectangle (9.5f, 4, 4, 16, 1); p.startNewSubPath (16, 5); p.lineTo (20.5f, 19.5f); break;
     }
     return p;
 }

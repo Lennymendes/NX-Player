@@ -6,6 +6,21 @@
 namespace nx
 {
 
+/** Player bar chip: miniature of the DAC (Merging Anubis, RME ADI-2, generic) + its active profile; click = profile menu. */
+class DeviceChip : public juce::Component
+{
+public:
+    explicit DeviceChip (AppContext& c) : ctx (c) { setRepaintsOnMouseActivity (true); setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override { showMenu(); }
+    void showMenu();
+    /** The profile entries of the menu (tests): name + whether it is the active one. */
+    std::vector<std::pair<juce::String, bool>> menuEntries() const;
+    void selectEntry (int index);
+private:
+    AppContext& ctx;
+};
+
 class PlayerBar : public juce::Component, private juce::Timer
 {
 public:
@@ -22,10 +37,15 @@ public:
     void markLoopB();
     void clearLoop();
 
-    std::function<void()> onToggleLyrics, onToggleQueue, onShowSignalPath, onOpenNowPlaying;
+    /** Volume slider position 0..1 (NX Remote, keyboard). */
+    void setVolumeLevel (double v);
+    void showStudioMenu();
+
+    std::function<void()> onToggleLyrics, onToggleQueue, onShowSignalPath, onOpenNowPlaying, onImmersive;
     bool shuffle = false, repeat = false;
 
-    IconButton lyricsButton, queueButton;
+    IconButton lyricsButton, queueButton, studioButton, immersiveButton;
+    DeviceChip deviceChip;
 
 private:
     void timerCallback() override;

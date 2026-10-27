@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "PlaybackEngine.h"
+#include "../Audio/MemoryPlayStream.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../DSP/DsdToPcm.h"
 #include "../DSP/Resampler.h"
@@ -100,13 +101,13 @@ DeviceCapabilities PlaybackEngine::getCapabilities() const
     return caps;
 }
 
-void PlaybackEngine::setSettings (const EngineSettings& s)
+void PlaybackEngine::setSettings (const EngineSettings& s, bool replanCurrent)
 {
     {
         std::lock_guard<std::mutex> l (controlLock);
         settings = s;
     }
-    if (state.load() != State::Stopped && currentIndex.load() >= 0)
+    if (replanCurrent && state.load() != State::Stopped && currentIndex.load() >= 0)
         requestFlushStart (currentIndex.load(), getPositionSeconds());
 }
 
@@ -413,10 +414,21 @@ bool PlaybackEngine::openItem (int index, double startSeconds, bool flush)
     std::unique_ptr<juce::InputStream> stream;
     if (item.openStream)          stream = item.openStream();
     else if (streamResolver)      stream = streamResolver (item);
+    bool inMemory = false;
     if (stream == nullptr && juce::File::isAbsolutePath (item.uri))
     {
-        auto f = std::make_unique<juce::FileInputStream> (juce::File (item.uri));
-        if (f->openedOk()) stream = std::make_unique<juce::BufferedInputStream> (f.release(), 1 << 17, true);
+        // Memory Play: the file is copied into RAM (in the background, playback starts at once).
+        if (s.memoryPlay)
+            if (auto m = MemoryPlayStream::open (juce::File (item.uri), (juce::int64) juce::jmax (1, s.memoryPlayMaxMb) * 1024 * 1024))
+            {
+                stream = std::move (m);
+                inMemory = true;
+            }
+        if (stream == nullptr)
+        {
+            auto f = std::make_unique<juce::FileInputStream> (juce::File (item.uri));
+            if (f->openedOk()) stream = std::make_unique<juce::BufferedInputStream> (f.release(), 1 << 17, true);
+        }
     }
 
     juce::String err;
@@ -431,6 +443,8 @@ bool PlaybackEngine::openItem (int index, double startSeconds, bool flush)
 
     auto plan = makePlan (dec->getFormat(), c, s);
     plan.channels = juce::jmin (plan.channels, juce::jlimit (1, 8, s.maxChannels));
+    plan.inMemory = inMemory;
+    plan.fileBytes = juce::File::isAbsolutePath (item.uri) ? juce::File (item.uri).getSize() : 0;
 
     const bool sameWire = decHavePlan && plan.sameWire (decPlan);
     if (! flush && ! sameWire) drainConverters();
@@ -1126,13 +1140,15 @@ SignalPath PlaybackEngine::getSignalPath() const
             break;
     }
 
-    if (plan.profileTag.isNotEmpty())
     {
+        // NX engine: 64-bit pipeline, Memory Play (whole file in RAM) or disk reads through the 8 MB ring
+        path.add ("Moteur", "Moteur NX 64 bits"_t + (plan.inMemory ? " · Memory Play"_t : juce::String()),
+                  plan.inMemory ? "Fichier entier en RAM ("_t + juce::String ((double) plan.fileBytes / 1048576.0, 1) + " Mo) : le disque reste au repos"_t
+                                : juce::String ("Lecture disque / réseau, tampon circulaire sans verrou de 8 Mo"_t),
+                  PathQuality::BitPerfect);
         const auto eff = getEffectiveSettings();
-        path.add ("Profil", anubisProfileName (eff.anubisProfile), anubisProfileDescription (eff.anubisProfile),
-                  plan.conversion == PlaybackPlan::Conversion::None || plan.conversion == PlaybackPlan::Conversion::FloatToInt
-                      ? PathQuality::BitPerfect : PathQuality::Enhanced);
-        if (eff.warmth && (plan.conversion == PlaybackPlan::Conversion::DsdToPcm || plan.conversion == PlaybackPlan::Conversion::Resample))
+        if (eff.warmth && plan.profileTag.isNotEmpty()
+            && (plan.conversion == PlaybackPlan::Conversion::DsdToPcm || plan.conversion == PlaybackPlan::Conversion::Resample))
             path.add ("Modelage", "Harmoniques paires −90 dB · plateau −0,5 dB > 18 kHz"_t, "64 bits, débrayable dans les réglages"_t, PathQuality::Enhanced);
     }
     if (plan.wire == WireFormat::DoP)
@@ -1157,6 +1173,22 @@ SignalPath PlaybackEngine::getSignalPath() const
     path.add ("Sortie", status.backendName + " · "_t + status.deviceName,
               status.detail.isNotEmpty() ? status.detail : (formatRate (status.sampleRate) + " · "_t + juce::String (status.deviceBits) + " bits"),
               status.exclusive && status.osMixerBypassed ? PathQuality::BitPerfect : PathQuality::LowQuality);
+
+    // DAC and the active device profile (Merging Anubis, RME ADI-2...)
+    {
+        const auto family = activeFamily (getSettings(), status.deviceName.isNotEmpty() ? status.deviceName : deviceName);
+        const auto dac = status.deviceName.isNotEmpty() ? status.deviceName : deviceName;
+        path.add ("DAC", dac, connectionLabel (dac, status.backendName) + (status.exclusive ? " · accès exclusif"_t : juce::String()),
+                  status.exclusive && status.osMixerBypassed ? PathQuality::BitPerfect : PathQuality::LowQuality);
+        if (plan.profileTag.isNotEmpty() && family != DeviceFamily::None)
+        {
+            const auto eff = getEffectiveSettings();
+            const int idx = familyCurrentProfile (eff, family);
+            path.add ("Profil", profileName (family, idx), profileDescription (family, idx),
+                      plan.conversion == PlaybackPlan::Conversion::None || plan.conversion == PlaybackPlan::Conversion::FloatToInt
+                          ? PathQuality::BitPerfect : PathQuality::Enhanced);
+        }
+    }
 
     switch (path.overall)
     {

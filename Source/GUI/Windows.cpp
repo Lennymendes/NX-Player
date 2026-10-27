@@ -6,8 +6,8 @@ namespace nx
 
 MiniPlayer::MiniPlayer (AppContext& c)
     : ctx (c), artwork (c, 256),
-      prev (style::Icon::Previous, "Précédent"_t, c), play (style::Icon::Play, "Lecture / pause", c),
-      next (style::Icon::Next, "Suivant", c), expand (style::Icon::Expand, "Fenêtre principale"_t, c), seek (c)
+      prev (style::Icon::Previous, "Précédent"_t, c), play (style::Icon::Play, "Lecture / pause"_t, c),
+      next (style::Icon::Next, "Suivant"_t, c), expand (style::Icon::Expand, "Fenêtre principale"_t, c), seek (c)
 {
     artwork.shadow = false;
     artwork.cornerRadius = 8.0f;

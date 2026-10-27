@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0A0C0E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.json">
+<title>NX Remote</title>
+<style>
+  :root { --bg:#0A0C0E; --card:rgba(255,255,255,.06); --line:rgba(255,255,255,.09); --text:#EEF3F1; --dim:#8A9792; --accent:#00F5A0; --accent2:#00D9F5; --dsd:#B07CFF; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  #glow { position:fixed; inset:0; background:radial-gradient(60% 40% at 30% 10%, rgba(0,245,160,.18), transparent), radial-gradient(50% 40% at 80% 30%, rgba(0,217,245,.14), transparent); pointer-events:none; }
+  main { position:relative; max-width:560px; margin:0 auto; padding:16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  header b { font-size:18px; } #dot { width:9px; height:9px; border-radius:50%; background:var(--dim); margin-left:auto; } #dot.on { background:var(--accent); box-shadow:0 0 10px var(--accent); }
+  .logo { width:26px; height:26px; border-radius:50%; border:3px solid var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; margin-bottom:14px; backdrop-filter:blur(18px); }
+  #art { width:100%; aspect-ratio:1; border-radius:14px; object-fit:cover; background:linear-gradient(135deg,#0b6e4f,#08a4bd); display:block; }
+  h1 { font-size:21px; margin:14px 0 2px; } .sub { color:var(--dim); margin:0; }
+  .pill { display:inline-flex; align-items:center; gap:6px; margin-top:10px; padding:5px 11px; border-radius:20px; font-size:12.5px; font-weight:600; border:1px solid currentColor; color:var(--accent); }
+  .pill i { width:7px; height:7px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  .times { display:flex; justify-content:space-between; color:var(--dim); font-size:12px; }
+  .row { display:flex; gap:10px; align-items:center; justify-content:center; }
+  button { font:inherit; color:var(--text); background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; }
+  button.on { background:var(--accent); color:#06120d; border-color:var(--accent); font-weight:700; }
+  .big { width:68px; height:68px; border-radius:50%; background:var(--text); color:var(--bg); font-size:26px; border:0; }
+  .tr { width:54px; height:54px; border-radius:50%; font-size:20px; }
+  h2 { font-size:12px; letter-spacing:.08em; color:var(--dim); margin:0 0 10px; text-transform:uppercase; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:12px; }
+  .alb img { width:100%; aspect-ratio:1; border-radius:10px; object-fit:cover; background:linear-gradient(135deg,#222,#333); }
+  .alb b { display:block; font-size:13px; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .alb span { color:var(--dim); font-size:12px; }
+  .trk { display:flex; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); }
+  .trk img { width:40px; height:40px; border-radius:6px; object-fit:cover; }
+  .trk div { flex:1; min-width:0; } .trk b, .trk span { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .trk span { color:var(--dim); font-size:12.5px; }
+  .badge { font-size:11px; font-weight:700; color:var(--accent); }
+  #search { width:100%; padding:11px 14px; border-radius:12px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font:inherit; margin-bottom:12px; }
+  #err { display:none; color:#ffb547; }
+</style>
+</head>
+<body>
+<div id="glow"></div>
+<main>
+  <header><div class="logo"></div><b>NX Remote</b><span id="dot"></span></header>
+  <p id="err" class="card">Accès refusé : scannez à nouveau le QR code affiché dans NX Player.</p>
+
+  <section class="card">
+    <img id="art" alt="">
+    <h1 id="title">NX Player</h1>
+    <p class="sub" id="artist">—</p>
+    <span class="pill" id="path" style="display:none"><i></i><span></span></span>
+    <div style="margin-top:14px">
+      <input type="range" id="seek" min="0" max="1000" value="0">
+      <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="tr" data-c="prev">⏮</button>
+      <button class="big" id="play" data-c="toggle">▶</button>
+      <button class="tr" data-c="next">⏭</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Volume</h2>
+    <input type="range" id="vol" min="0" max="100" value="100">
+    <p class="sub" id="volinfo" style="font-size:12px">100 % = bit-perfect</p>
+  </section>
+
+  <section class="card">
+    <h2>Boucle A-B</h2>
+    <div class="row"><button data-c="loopA">A</button><button data-c="loopB">B</button><button data-c="loopClear" id="loopOff">Arrêt</button></div>
+    <p class="sub" id="loopinfo" style="text-align:center;font-size:12.5px;margin-top:8px"></p>
+  </section>
+
+  <section class="card" id="profiles" style="display:none">
+    <h2 id="device">Profils</h2>
+    <div id="plist" style="display:grid;gap:8px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Bibliothèque</h2>
+    <input id="search" placeholder="Rechercher un morceau, un artiste…" autocomplete="off">
+    <div id="results"></div>
+    <div class="grid" id="albums"></div>
+  </section>
+</main>
+<script>
+const k = new URLSearchParams(location.search).get('k') || '';
+const $ = id => document.getElementById(id);
+const art = key => key ? '/api/art?k=' + encodeURIComponent(k) + '&key=' + encodeURIComponent(key) : '';
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+let state = {}, dragging = false, volDrag = false, lastArt = null;
+
+async function cmd(c, extra) {
+  const q = new URLSearchParams(Object.assign({ k, c }, extra || {}));
+  await fetch('/api/cmd?' + q, { method: 'POST' }).catch(() => {});
+  setTimeout(poll, 150);
+}
+document.querySelectorAll('button[data-c]').forEach(b => b.onclick = () => cmd(b.dataset.c));
+
+async function poll() {
+  try {
+    const r = await fetch('/api/state?k=' + encodeURIComponent(k));
+    if (r.status === 403) { $('err').style.display = 'block'; $('dot').className = ''; return; }
+    state = await r.json();
+    $('dot').className = 'on';
+    $('title').textContent = state.title || 'NX Player';
+    $('artist').textContent = state.artist ? state.artist + (state.album ? ' — ' + state.album : '') : 'Rien en lecture';
+    if (state.art !== lastArt) { lastArt = state.art; $('art').src = art(state.art); }
+    $('play').textContent = state.playing ? '❚❚' : '▶';
+    const p = $('path');
+    if (state.path) {
+      p.style.display = 'inline-flex'; p.querySelector('span').textContent = state.path;
+      p.style.color = state.quality && state.quality.indexOf('Bit') === 0 ? 'var(--dsd)' : 'var(--accent)';
+    } else p.style.display = 'none';
+    if (!dragging && state.duration > 0) $('seek').value = Math.round(1000 * state.position / state.duration);
+    $('pos').textContent = fmt(state.position); $('dur').textContent = fmt(state.duration);
+    if (!volDrag) $('vol').value = Math.round(100 * (state.volume ?? 1));
+    $('vol').disabled = !!state.volumeLocked;
+    $('volinfo').textContent = state.volumeLocked ? 'Volume verrouillé à 100 % (RME DSD Direct)' : (state.volume >= 0.999 ? '100 % = bit-perfect' : Math.round(state.volume * 100) + ' %');
+    $('loopinfo').textContent = state.loop ? 'Boucle ' + fmt(state.loopA) + ' → ' + fmt(state.loopB) : 'Aucune boucle';
+    const profs = state.profiles || [];
+    $('profiles').style.display = profs.length ? 'block' : 'none';
+    $('device').textContent = state.device ? 'Profils · ' + state.device : 'Profils';
+    const pl = $('plist');
+    if (pl.dataset.sig !== JSON.stringify([profs, state.profile])) {
+      pl.dataset.sig = JSON.stringify([profs, state.profile]);
+      pl.innerHTML = '';
+      profs.forEach((name, i) => {
+        const b = document.createElement('button');
+        b.textContent = name; b.className = i === state.profile ? 'on' : '';
+        b.onclick = () => cmd('profile', { i });
+        pl.appendChild(b);
+      });
+    }
+  } catch (e) { $('dot').className = ''; }
+}
+
+$('seek').oninput = () => dragging = true;
+$('seek').onchange = () => { dragging = false; if (state.duration > 0) cmd('seek', { t: state.duration * $('seek').value / 1000 }); };
+$('vol').oninput = () => volDrag = true;
+$('vol').onchange = () => { volDrag = false; cmd('volume', { v: $('vol').value / 100 }); };
+
+async function library(q) {
+  const r = await fetch('/api/library?k=' + encodeURIComponent(k) + (q ? '&q=' + encodeURIComponent(q) : ''));
+  if (!r.ok) return;
+  const data = await r.json();
+  $('albums').innerHTML = ''; $('results').innerHTML = '';
+  (data.albums || []).forEach(a => {
+    const d = document.createElement('div'); d.className = 'alb';
+    d.innerHTML = '<img loading="lazy"><b></b><span></span>';
+    d.querySelector('img').src = art(a.art); d.querySelector('b').textContent = a.title; d.querySelector('span').textContent = a.artist + (a.badge ? ' · ' + a.badge : '');
+    d.onclick = () => cmd('playAlbum', { artist: a.artist, album: a.title });
+    $('albums').appendChild(d);
+  });
+  (data.tracks || []).forEach(t => {
+    const d = document.createElement('div'); d.className = 'trk';
+    d.innerHTML = '<img loading="lazy"><div><b></b><span></span></div><em class="badge"></em>';
+    d.querySelector('img').src = art(t.art); d.querySelector('b').textContent = t.title; d.querySelector('span').textContent = t.artist + ' — ' + t.album;
+    d.querySelector('em').textContent = t.badge || '';
+    d.onclick = () => cmd('playTrack', { id: t.id });
+    $('results').appendChild(d);
+  });
+}
+let timer;
+$('search').oninput = () => { clearTimeout(timer); timer = setTimeout(() => library($('search').value.trim()), 300); };
+
+poll(); setInterval(poll, 1000); library('');
+</script>
+</body>
+</html>

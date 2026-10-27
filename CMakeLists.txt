@@ -57,6 +57,10 @@ endif()
 #-------------------------------------------------------------------------------- ALAC (Apple, Apache 2.0)
 file(GLOB NX_ALAC_SOURCES CONFIGURE_DEPENDS ThirdParty/alac/*.c ThirdParty/alac/*.cpp)
 add_library(nx_alac STATIC ${NX_ALAC_SOURCES})
+
+# QR Code generator (Project Nayuki, MIT) — NX Remote
+add_library(nx_qrcodegen STATIC ThirdParty/qrcodegen/qrcodegen.cpp)
+target_include_directories(nx_qrcodegen PUBLIC ThirdParty/qrcodegen)
 target_include_directories(nx_alac PUBLIC ThirdParty/alac)
 if(MSVC)
     target_compile_options(nx_alac PRIVATE /W0)
@@ -145,7 +149,7 @@ target_include_directories(NXPlayer PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generat
 juce_add_binary_data(NXPlayerData
     HEADER_NAME NXPlayerData.h
     NAMESPACE NXData
-    SOURCES Resources/AppIcon_256.png)
+    SOURCES Resources/AppIcon_256.png Resources/i18n/en.json Resources/remote/index.html)
 
 set(NX_GL_MODULE "")
 if(NX_ENABLE_OPENGL)
@@ -199,6 +203,7 @@ endif()
 target_link_libraries(NXPlayer PRIVATE
     NXPlayerData
     nx_alac
+    nx_qrcodegen
     ${NX_SQLITE_TARGET}
     juce::juce_core
     juce::juce_events
@@ -224,10 +229,10 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(NXPlayer PRIVATE avrt ole32 ksuser windowsapp)
+    target_link_libraries(NXPlayer PRIVATE avrt ole32 ksuser windowsapp psapi)
 endif()
 if(APPLE)
-    target_link_libraries(NXPlayer PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework MediaPlayer")
+    target_link_libraries(NXPlayer PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework MediaPlayer" "-framework IOKit" "-framework CoreFoundation")
 endif()
 
 # Thèmes et plug-ins livrés avec l'application (Catalog : plug-ins supplémentaires à installer en un clic).

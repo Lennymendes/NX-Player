@@ -289,13 +289,14 @@ MarketplacePage::~MarketplacePage() { stopTimer(); }
 
 juce::StringArray MarketplacePage::tabIds() const
 {
-    return mode == Mode::Gallery ? juce::StringArray { "tout", "themes", "interface", "dsp" } : juce::StringArray { "catalogue", "installes" };
+    // the last tab switches to the other mode (the sidebar only has "Extensions & Thèmes")
+    return mode == Mode::Gallery ? juce::StringArray { "tout", "themes", "interface", "dsp", ">plugins" } : juce::StringArray { "catalogue", "installes", ">galerie" };
 }
 
 juce::StringArray MarketplacePage::tabLabels() const
 {
-    return mode == Mode::Gallery ? juce::StringArray { "Tout", "Thèmes"_t, "Interface", "DSP" }
-                                 : juce::StringArray { "Catalogue", "Installés"_t };
+    return mode == Mode::Gallery ? juce::StringArray { "Tout"_t, "Thèmes"_t, "Interface", "DSP", "Plugins utilisateur ›"_t }
+                                 : juce::StringArray { "Catalogue", "Installés"_t, "‹ Extensions & Thèmes"_t };
 }
 
 bool MarketplacePage::isUserFolder (const juce::File& f) const
@@ -307,7 +308,7 @@ void MarketplacePage::setMode (Mode m, const juce::String& t)
 {
     const bool modeChanged = m != mode;
     mode = m;
-    tab = tabIds().contains (t) ? t : tabIds()[0];
+    tab = tabIds().contains (t) && ! t.startsWith (">") ? t : tabIds()[0];
     if (modeChanged) filter.clear();
     refresh();
 }
@@ -321,7 +322,12 @@ void MarketplacePage::refresh()
         auto* b = tabButtons.add (new juce::TextButton (labels[i]));
         b->setClickingTogglesState (false);
         b->setToggleState (ids[i] == tab, juce::dontSendNotification);
-        b->onClick = [this, id = ids[i]] { ctx.navigate ({ mode == Mode::Gallery ? PageId::Marketplace : PageId::UserPlugins, id }); };
+        b->onClick = [this, id = ids[i]]
+        {
+            if (id == ">plugins") ctx.navigate ({ PageId::UserPlugins, "catalogue" });
+            else if (id == ">galerie") ctx.navigate ({ PageId::Marketplace, "tout" });
+            else ctx.navigate ({ mode == Mode::Gallery ? PageId::Marketplace : PageId::UserPlugins, id });
+        };
         contentComp.addAndMakeVisible (b);
     }
     importButton.setVisible (mode == Mode::UserPlugins);
