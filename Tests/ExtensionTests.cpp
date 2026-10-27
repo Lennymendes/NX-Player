@@ -445,6 +445,31 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
     shoot ("15_barre_laterale_masquee");
     main->setSidebarVisible (true, false);
 
+    // Device profiles: the Merging Anubis banner (forced, the virtual DAC has another name), then RME
+    {
+        auto st = app.engine().getSettings();
+        st.hardwareProfile = nx::HardwareProfile::MergingRavenna;
+        app.engine().setSettings (st);
+        app.navigate ({ nx::PageId::Settings });
+        t.check (shoot ("16_profil_anubis") > 40, "Réglages : profils Merging Anubis (3 profils, astuce MT VAD)"_t);
+        st.hardwareProfile = nx::HardwareProfile::RmeAdi2;
+        app.engine().setSettings (st);
+        app.navigate ({ nx::PageId::Settings });
+        t.check (shoot ("17_profil_rme") > 40, "Réglages : profils RME ADI-2 (sécurité DSD Direct)"_t);
+        st.hardwareProfile = nx::HardwareProfile::Auto;
+        app.engine().setSettings (st);
+    }
+    // A-B loop markers on the seek bar
+    {
+        const double len = app.engine().getDurationSeconds();
+        if (len > 0.1) app.engine().setLoop (len * 0.3, len * 0.7);
+        main->player.trackChanged();
+        app.navigate ({ nx::PageId::NowPlaying });
+        shoot ("18_boucle_ab");
+        t.check (app.engine().isLoopActive(), "boucle A-B posée depuis l'interface"_t);
+        main->player.clearLoop();
+    }
+
     // mini player
     nx::MiniPlayer mini (app);
     mini.setSize (380, 96);

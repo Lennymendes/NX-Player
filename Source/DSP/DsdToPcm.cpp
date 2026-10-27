@@ -7,9 +7,10 @@
 namespace nx::dsp
 {
 
-void DsdToPcm::prepare (double dsdRate, double outputRate, int numChannels, double gain)
+void DsdToPcm::prepare (double dsdRate, double outputRate, int numChannels, double gain, bool minimumPhase)
 {
     channels = numChannels;
+    minPhase = minimumPhase;
     bytesPerOut = std::max (1, (int) std::lround (dsdRate / (8.0 * outputRate)));
     outRate = dsdRate / (8.0 * bytesPerOut);
 
@@ -20,7 +21,8 @@ void DsdToPcm::prepare (double dsdRate, double outputRate, int numChannels, doub
     taps = (taps + 7) / 8 * 8;
     numTables = taps / 8;
 
-    const auto h = designLowpass (taps, 0.5 * (passHz + stopHz) / dsdRate, attenuation, gain);
+    auto h = designLowpass (taps, 0.5 * (passHz + stopHz) / dsdRate, attenuation, gain);
+    if (minimumPhase) h = toMinimumPhase (h);
 
     tables.assign ((size_t) numTables * 256, 0.0);
     for (int j = 0; j < numTables; ++j)

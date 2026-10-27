@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "PlayerBar.h"
+#include "../Engine/DeviceProfiles.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Ext/PluginManager.h"
 
@@ -17,7 +18,7 @@ PlayerBar::PlayerBar (AppContext& c)
       repeatButton (style::Icon::Repeat, "Répéter"_t, c),
       miniButton (style::Icon::Mini, "Mini-lecteur"_t, c),
       volumeButton (style::Icon::Volume, "Volume (100 % = bit-perfect)", c),
-      seek (c), badge (c), pluginSlot (c, "playerbar.right", true)
+      seek (c), loopButton (c), badge (c), pluginSlot (c, "playerbar.right", true)
 {
     artwork.cornerRadius = 8.0f;
     artwork.shadow = false;
@@ -26,6 +27,18 @@ PlayerBar::PlayerBar (AppContext& c)
         addAndMakeVisible (b);
     addAndMakeVisible (artwork);
     addAndMakeVisible (seek);
+    addAndMakeVisible (loopButton);
+    loopButton.onClick = [this]
+    {
+        if (loopButton.stage == 0) markLoopA();
+        else if (loopButton.stage == 1) markLoopB();
+        else clearLoop();
+    };
+    seek.onLoopEdited = [this] (double a, double b)
+    {
+        if (loopButton.stage == 2 && b > a) ctx.engine().setLoop (a, b);
+        else if (loopButton.stage == 1) pendingLoopA = a;
+    };
     addAndMakeVisible (badge);
     addAndMakeVisible (pluginSlot);
 
@@ -99,7 +112,7 @@ void PlayerBar::resized()
     // center: transport row + seek bar
     auto row = center.removeFromTop (center.getHeight() * 55 / 100);
     const int b = row.getHeight();
-    auto controls = row.withSizeKeepingCentre (b * 5 + 40, b);
+    auto controls = row.withSizeKeepingCentre (b * 5 + 40 + 10 + 44, b);
     shuffleButton.setBounds (controls.removeFromLeft (b).reduced (6));
     controls.removeFromLeft (10);
     prevButton.setBounds (controls.removeFromLeft (b).reduced (4));
@@ -109,11 +122,17 @@ void PlayerBar::resized()
     nextButton.setBounds (controls.removeFromLeft (b).reduced (4));
     controls.removeFromLeft (10);
     repeatButton.setBounds (controls.removeFromLeft (b).reduced (6));
+    controls.removeFromLeft (10);
+    loopButton.setBounds (controls.removeFromLeft (44));
     seek.setBounds (center.withSizeKeepingCentre (juce::jmin (center.getWidth(), 620), center.getHeight()));
 
     // right: badge / plug-ins / buttons / volume
     auto top = right.removeFromTop (right.getHeight() / 2);
-    badge.setBounds (top.removeFromLeft (juce::jmin (top.getWidth() - 96, 190)).reduced (0, 4));
+    {
+        // wide enough for the pipeline label ("DSD64 → DXD 352,8 kHz [Anubis Ref]")
+        const int wanted = juce::roundToInt (juce::GlyphArrangement::getStringWidth (style::font (12.0f, true), badge.getLabel())) + 48;
+        badge.setBounds (top.removeFromLeft (juce::jlimit (150, juce::jmax (150, top.getWidth() - 96), juce::jmax (190, wanted))).reduced (0, 4));
+    }
     top.removeFromLeft (6);
     pluginSlot.setVisible (! pluginSlot.isEmpty());
     pluginSlot.setBounds (top.reduced (0, 2));
@@ -131,8 +150,56 @@ void PlayerBar::mouseUp (const juce::MouseEvent& e)
         onOpenNowPlaying();
 }
 
+void PlayerBar::markLoopA()
+{
+    auto& e = ctx.engine();
+    if (e.getCurrentIndex() < 0) return;
+    if (e.isLoopActive()) e.clearLoop();
+    pendingLoopA = e.getPositionSeconds();
+    loopButton.stage = 1;
+    loopButton.repaint();
+    seek.setLoop (pendingLoopA, -1.0);
+    ctx.showMessage ("Boucle : début A à "_t + style::formatTime (pendingLoopA) + " (O pour la fin B)"_t);
+}
+
+void PlayerBar::markLoopB()
+{
+    auto& e = ctx.engine();
+    if (e.getCurrentIndex() < 0) return;
+    const double a = pendingLoopA >= 0.0 ? pendingLoopA : (e.isLoopActive() ? e.getLoopA() : 0.0);
+    const double b = e.getPositionSeconds();
+    if (b - a < 0.1) { ctx.showMessage ("Boucle : la fin B doit être après le début A"_t); return; }
+    e.setLoop (a, b);
+    pendingLoopA = -1.0;
+    loopButton.stage = 2;
+    loopButton.repaint();
+    seek.setLoop (a, b);
+    ctx.showMessage ("Boucle A-B : "_t + style::formatTime (a) + " → "_t + style::formatTime (b) + " (L pour arrêter)"_t);
+}
+
+void PlayerBar::clearLoop()
+{
+    ctx.engine().clearLoop();
+    pendingLoopA = -1.0;
+    loopButton.stage = 0;
+    loopButton.repaint();
+    seek.setLoop (-1.0, -1.0);
+}
+
+void PlayerBar::syncLoop()
+{
+    auto& e = ctx.engine();
+    if (e.isLoopActive() && e.getLoopIndex() != e.getCurrentIndex())
+        e.clearLoop (false);                         // another track: the loop belonged to the previous one
+    if (e.isLoopActive()) { loopButton.stage = 2; seek.setLoop (e.getLoopA(), e.getLoopB()); }
+    else if (loopButton.stage == 2) { loopButton.stage = 0; seek.setLoop (-1.0, -1.0); }
+    loopButton.repaint();
+}
+
 void PlayerBar::trackChanged()
 {
+    if (loopButton.stage == 1) { pendingLoopA = -1.0; loopButton.stage = 0; seek.setLoop (-1.0, -1.0); }
+    syncLoop();
     if (const auto* t = ctx.currentTrack())
     {
         title = t->title;
@@ -159,16 +226,16 @@ void PlayerBar::stateChanged()
         badge.update ({}, PathQuality::BitPerfect);
     else
     {
-        juce::String text;
-        if (plan.source.isDsd()) text = "DSD" + juce::String (plan.source.dsdMultiple());
-        else
-        {
-            const auto khz = plan.source.sampleRate / 1000.0;
-            text = juce::String (plan.source.bitsPerSample) + "/" + (std::fmod (khz, 1.0) == 0.0 ? juce::String ((int) khz) : juce::String (khz, 1).replaceCharacter ('.', ','));
-            if (plan.source.lossy) text = plan.source.codec;
-        }
-        text << "  " << toString (path.overall);
-        badge.update (text, path.overall);
+        // The active pipeline: "DSD64 → DXD 352,8 kHz [Anubis Ref]", "PCM 44,1 → DXD [Warm]", "DSD64 DoP [Bit-Perfect]"
+        badge.update (pipelineLabel (plan, toString (path.overall)), path.overall);
+        resized();
+    }
+    {
+        // RME "DSD Direct" safety: the profile holds the software volume at 100 %
+        const bool locked = ctx.engine().isVolumeLockedByProfile();
+        volume.setEnabled (! locked);
+        volume.setTooltip (locked ? juce::String ("Volume verrouillé à 100 % par le profil RME (DSD Direct) : réglez le niveau en analogique."_t)
+                                  : juce::String ("Volume numérique 64 bits. À 100 %, le flux reste bit-perfect."_t));
     }
     lyricsButton.repaint();
 }

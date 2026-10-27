@@ -9,9 +9,10 @@
 namespace nx::dsp
 {
 
-void Resampler::prepare (double inputRate, double outputRate, int numChannels, double attenuationDb, double passFraction)
+void Resampler::prepare (double inputRate, double outputRate, int numChannels, double attenuationDb, double passFraction, bool minimumPhase)
 {
     channels = numChannels;
+    minPhase = minimumPhase;
     const auto in = (int64_t) std::llround (inputRate);
     const auto out = (int64_t) std::llround (outputRate);
     const auto g = std::gcd (in, out);
@@ -32,7 +33,8 @@ void Resampler::prepare (double inputRate, double outputRate, int numChannels, d
         const int total = kaiserLength (attenuationDb, (stop - pass) / fsUp);
         taps = std::max (2, (total + L - 1) / L);
         const int n = taps * L;
-        const auto h = designLowpass (n, 0.5 * (pass + stop) / fsUp, attenuationDb, (double) L);
+        auto h = designLowpass (n, 0.5 * (pass + stop) / fsUp, attenuationDb, (double) L);
+        if (minimumPhase) h = toMinimumPhase (h);
 
         phases.assign ((size_t) n, 0.0);
         for (int p = 0; p < L; ++p)

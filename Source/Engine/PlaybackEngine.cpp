@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../DSP/DsdToPcm.h"
 #include "../DSP/Resampler.h"
+#include "../Audio/LoopingDecoder.h"
 #include <cmath>
 #include <cstring>
 
@@ -113,6 +114,34 @@ EngineSettings PlaybackEngine::getSettings() const
 {
     std::lock_guard<std::mutex> l (controlLock);
     return settings;
+}
+
+void PlaybackEngine::setLoop (double a, double b)
+{
+    if (b - a < 0.05 || currentIndex.load() < 0) return;
+    loopA = juce::jmax (0.0, a);
+    loopB = b;
+    loopIndex = currentIndex.load();
+    double pos = getPositionSeconds();
+    if (pos < a || pos >= b) pos = a;
+    // The ring already holds what follows the play position: re-read once, from here, through the loop.
+    if (state.load() != State::Stopped) requestFlushStart (currentIndex.load(), pos);
+}
+
+void PlaybackEngine::clearLoop (bool rebuffer)
+{
+    const bool wasActive = loopIndex.load() >= 0;
+    loopIndex = -1;
+    loopA = -1.0;
+    loopB = -1.0;
+    if (rebuffer && wasActive && state.load() != State::Stopped && currentIndex.load() >= 0)
+        requestFlushStart (currentIndex.load(), getPositionSeconds());
+}
+
+EngineSettings PlaybackEngine::getEffectiveSettings() const
+{
+    std::lock_guard<std::mutex> l (controlLock);
+    return resolveProfile (settings, deviceName);
 }
 
 juce::String PlaybackEngine::getLastError() const
@@ -318,7 +347,26 @@ void PlaybackEngine::run()
             continue;
         }
 
-        if (produce (writable) > 0)
+        if (loopDecoder != nullptr && loopDecoder->isAtWrap())
+        {
+            // The next byte written is the start of the loop again: mark it exactly.
+            const auto f = loopDecoder->getFormat();
+            const double unitRate = f.isDsd() ? f.sampleRate / 8.0 : f.sampleRate;
+            const RingEvent pe { RingEvent::Position, bytesWritten, decoderGen, decIndex, decPlanId, (double) loopDecoder->getLoopA() / unitRate };
+            events.write (&pe, 1);
+            loopWrapsSeen = loopDecoder->getWrapCount() + 1;
+        }
+        const int produced = produce (writable);
+        if (loopDecoder != nullptr && loopDecoder->getWrapCount() > loopWrapsSeen)   // wrapped without notice (B past the end)
+        {
+            // The loop wrapped inside this chunk: tell the audio thread where the clock restarts.
+            loopWrapsSeen = loopDecoder->getWrapCount();
+            const auto f = loopDecoder->getFormat();
+            const double unitRate = f.isDsd() ? f.sampleRate / 8.0 : f.sampleRate;
+            const RingEvent pe { RingEvent::Position, bytesWritten, decoderGen, decIndex, decPlanId, (double) loopDecoder->getPosition() / unitRate };
+            events.write (&pe, 1);
+        }
+        if (produced > 0)
             continue;
 
         // End of this track: gapless move to the next one.
@@ -359,7 +407,7 @@ bool PlaybackEngine::openItem (int index, double startSeconds, bool flush)
         if (index < 0 || index >= (int) decoderQueue.size()) return false;
         item = decoderQueue[(size_t) index];
         c = caps;
-        s = settings;
+        s = resolveProfile (settings, deviceName);
     }
 
     std::unique_ptr<juce::InputStream> stream;
@@ -382,7 +430,7 @@ bool PlaybackEngine::openItem (int index, double startSeconds, bool flush)
     }
 
     auto plan = makePlan (dec->getFormat(), c, s);
-    plan.channels = juce::jmin (plan.channels, 8);
+    plan.channels = juce::jmin (plan.channels, juce::jlimit (1, 8, s.maxChannels));
 
     const bool sameWire = decHavePlan && plan.sameWire (decPlan);
     if (! flush && ! sameWire) drainConverters();
@@ -418,6 +466,20 @@ bool PlaybackEngine::openItem (int index, double startSeconds, bool flush)
     const RingEvent e { RingEvent::Track, bytesWritten, decoderGen, index, planId, startSeconds };
     events.write (&e, 1);
 
+    // A-B loop on this track: wrap the decoder (positions in its units, the start is moved inside the loop).
+    loopDecoder = nullptr;
+    loopWrapsSeen = 0;
+    if (loopIndex.load() == index && loopB.load() > loopA.load())
+    {
+        const auto f = dec->getFormat();
+        const double unitRate = f.isDsd() ? f.sampleRate / 8.0 : f.sampleRate;
+        auto looping = std::make_unique<LoopingDecoder> (std::move (dec), (juce::int64) (loopA.load() * unitRate), (juce::int64) (loopB.load() * unitRate),
+                                                         (int) (loopCrossfadeMs * 0.001 * unitRate));
+        const auto pos = (juce::int64) (startSeconds * unitRate);
+        if (pos < looping->getLoopA() || startSeconds >= loopB.load()) looping->seek (looping->getLoopA());
+        loopDecoder = looping.get();
+        dec = std::move (looping);
+    }
     decoder = std::move (dec);
     decIndex = index;
     decPlan = plan;
@@ -435,23 +497,32 @@ void PlaybackEngine::preparePlanConverters (const PlaybackPlan& plan, bool keepS
     dsdConverter.reset();
     resampler.reset();
     const int ch = plan.source.numChannels;
+    const auto eff = getEffectiveSettings();
+    const bool minPhase = plan.filterShape == FilterShape::MinimumPhase;
+    // Minimum phase ("Analog Warmth"): a gentler slope that starts below 20 kHz, fully attenuated at Nyquist.
+    const double passFraction = minPhase ? 0.86 : 0.907;
 
     if (plan.conversion == PlaybackPlan::Conversion::DsdToPcm)
     {
         dsdConverter = std::make_unique<dsp::DsdToPcm>();
         dsdConverter->prepare (plan.source.sampleRate, plan.conversionRate, ch,
-                               std::pow (10.0, getSettings().dsdToPcmGainDb / 20.0));
+                               std::pow (10.0, eff.dsdToPcmGainDb / 20.0), minPhase);
         if (std::abs (dsdConverter->getOutputRate() - plan.deviceRate) > 0.5)
         {
             resampler = std::make_unique<dsp::Resampler>();
-            resampler->prepare (dsdConverter->getOutputRate(), plan.deviceRate, ch);
+            resampler->prepare (dsdConverter->getOutputRate(), plan.deviceRate, ch, 160.0, passFraction, minPhase);
         }
     }
     else if (plan.conversion == PlaybackPlan::Conversion::Resample)
     {
         resampler = std::make_unique<dsp::Resampler>();
-        resampler->prepare (plan.source.sampleRate, plan.deviceRate, ch);
+        resampler->prepare (plan.source.sampleRate, plan.deviceRate, ch, 160.0, passFraction, minPhase);
     }
+
+    // Only converted streams are shaped: a bit-perfect plan never goes through this stage.
+    const bool converted = plan.conversion == PlaybackPlan::Conversion::DsdToPcm || plan.conversion == PlaybackPlan::Conversion::Resample;
+    shaper.prepare (plan.deviceRate, ch, converted && eff.warmth,
+                    plan.conversion == PlaybackPlan::Conversion::DsdToPcm && eff.limiter && eff.dsdToPcmGainDb > 0.0);
 }
 
 void PlaybackEngine::writeAll (const void* data, size_t numBytes)
@@ -544,7 +615,7 @@ int PlaybackEngine::produce (int writableBytes)
             }
             if (n <= 0) return 0;
             const int out = resampler->process (tmpDouble.data(), n, tmpDouble2.data(), resampler->maxOutputFor (n));
-            if (out > 0) doublesToRing (tmpDouble2.data(), out);
+            if (out > 0) { shaper.process (tmpDouble2.data(), out); doublesToRing (tmpDouble2.data(), out); }
             return n;
         }
 
@@ -559,10 +630,11 @@ int PlaybackEngine::produce (int writableBytes)
             if (resampler != nullptr)
             {
                 const int out = resampler->process (tmpDouble.data(), pcm, tmpDouble2.data(), resampler->maxOutputFor (pcm));
-                if (out > 0) doublesToRing (tmpDouble2.data(), out);
+                if (out > 0) { shaper.process (tmpDouble2.data(), out); doublesToRing (tmpDouble2.data(), out); }
             }
             else if (pcm > 0)
             {
+                shaper.process (tmpDouble.data(), pcm);
                 doublesToRing (tmpDouble.data(), pcm);
             }
             return n;
@@ -605,7 +677,7 @@ void PlaybackEngine::drainConverters()
         frames = resampler->process (in.data(), frames + zeros, out.data(), resampler->maxOutputFor (frames + zeros));
         pcm.swap (out);
     }
-    if (frames > 0) writeDoubles (pcm, frames);
+    if (frames > 0) { shaper.process (pcm.data(), frames); writeDoubles (pcm, frames); }
     dsdConverter.reset();
     resampler.reset();
 }
@@ -649,6 +721,14 @@ bool PlaybackEngine::consumeEvents (const PlanWire& active) noexcept
             endedFlag = true;
             return false;
         }
+        if (e.kind == RingEvent::Position)
+        {
+            events.discard (1);
+            positionBase.store (e.startSeconds);
+            positionUnits.store (0);
+            unitsIntoTrack = 0;
+            continue;
+        }
         const auto& w = planWires[(size_t) (e.planId & 63)];
         if (! w.same (active))
         {
@@ -678,9 +758,13 @@ bool PlaybackEngine::checkPreroll (size_t unitBytes, double unitsPerSecond, int 
     const auto numPending = events.peek (pendingEvents, 4);
     bool endQueued = false;
     for (size_t i = 0; i < numPending; ++i) endQueued |= pendingEvents[i].kind == RingEvent::End;
-    if (ring.readable() >= wanted || endQueued || prerollFrames > (juce::int64) unitsPerSecond)
+    // A forced minimum (DoP "Sync Safe" after a rate change) keeps sending DoP silence while the network
+    // clock (PTP) locks, before the first byte of music.
+    const bool minimumDone = prerollFrames >= prerollMinUnits;
+    if (minimumDone && (ring.readable() >= wanted || endQueued || prerollFrames > (juce::int64) unitsPerSecond + prerollMinUnits))
     {
         prerolling = false;
+        prerollMinUnits = 0;
         return true;
     }
     prerollFrames += requestedUnits;
@@ -775,7 +859,7 @@ void PlaybackEngine::renderInt (int32_t* const* out, int numCh, int numFrames) n
         else
         {
             const auto* src = reinterpret_cast<const int32_t*> (rtBytes.data());
-            const double targetGain = fixedVolume.load() ? 1.0 : volume.load();
+            const double targetGain = isFixedVolume() ? 1.0 : volume.load();
             const bool dspOn = activeChain != nullptr && activeChain->isActive();
             const int exactBits = deviceExactBits.load();
             const bool process = active.needsRequantize || dspOn || targetGain != 1.0 || smoothedGain != 1.0
@@ -901,7 +985,7 @@ bool PlaybackEngine::configureDevice (int planId)
         auto it = plans.find (planId);
         if (it == plans.end()) return false;
         plan = it->second;
-        s = settings;
+        s = resolveProfile (settings, deviceName);
         dev = deviceName;
     }
 
@@ -914,7 +998,8 @@ bool PlaybackEngine::configureDevice (int planId)
     cfg.numChannels = plan.channels;
     cfg.sourceBits = plan.ringBitsHint;
     cfg.exclusive = s.exclusive;
-    cfg.bufferFrames = s.bufferMilliseconds > 0 ? (int) (s.bufferMilliseconds * plan.deviceRate / 1000.0) : 0;
+    cfg.bufferFrames = s.bufferFrames > 0 ? s.bufferFrames
+                     : s.bufferMilliseconds > 0 ? (int) (s.bufferMilliseconds * plan.deviceRate / 1000.0) : 0;
 
     juce::String err;
     if (! backend->open (cfg, err))
@@ -935,13 +1020,21 @@ bool PlaybackEngine::configureDevice (int planId)
     const int exact = plan.wire == WireFormat::Pcm ? juce::jlimit (8, 32, status.exactBits > 0 ? status.exactBits : 24) : 24;
     deviceExactBits = exact;
     for (auto& r : requantizers) r.setBits (exact);
-    smoothedGain = fixedVolume.load() ? 1.0 : volume.load();
+    profileLocksVolume = s.lockVolume;
+    smoothedGain = isFixedVolume() ? 1.0 : volume.load();
 
     // The device is stopped: the DSP chain can be (re)prepared and adopted directly.
     if (auto* p = pendingChain.exchange (nullptr)) activeChain = p;
     if (activeChain != nullptr) activeChain->prepare (status.sampleRate > 0 ? status.sampleRate : plan.deviceRate, plan.channels, maxBlock);
 
     dop.markerToggle = false;
+    // The device is stopped: the audio-thread state can be set directly. DoP "Sync Safe": silence first.
+    if (plan.wire == WireFormat::DoP && s.dopPrerollMs > 0)
+    {
+        prerolling = true;
+        prerollFrames = 0;
+        prerollMinUnits = (juce::int64) (s.dopPrerollMs * plan.deviceRate / 1000.0);
+    }
     activePlanId = planId;
     int expected = planId;
     reconfigurePlanId.compare_exchange_strong (expected, 0);
@@ -1015,17 +1108,33 @@ SignalPath PlaybackEngine::getSignalPath() const
     switch (plan.conversion)
     {
         case PlaybackPlan::Conversion::DsdToPcm:
-            path.add ("Conversion", "DSD -> PCM " + formatRate (plan.deviceRate), "FIR phase linéaire 64 bits, 150 dB"_t, PathQuality::Enhanced);
+        {
+            const auto eff = getEffectiveSettings();
+            path.add ("Conversion", "DSD -> PCM " + formatRate (plan.deviceRate),
+                      (plan.filterShape == FilterShape::MinimumPhase ? juce::String ("FIR phase minimale 64 bits, 150 dB"_t) : juce::String ("FIR phase linéaire 64 bits, 150 dB"_t))
+                          + (eff.dsdToPcmGainDb != 0.0 ? ", gain +"_t + juce::String (eff.dsdToPcmGainDb, 0) + " dB" + (eff.limiter ? " + limiteur"_t : juce::String()) : juce::String()),
+                      PathQuality::Enhanced);
             break;
+        }
         case PlaybackPlan::Conversion::Resample:
             path.add ("Conversion", "Sinc " + formatRate (src.sampleRate) + " -> " + formatRate (plan.deviceRate),
-                      "Polyphase 64 bits, 160 dB", PathQuality::Enhanced);
+                      plan.filterShape == FilterShape::MinimumPhase ? juce::String ("Polyphase 64 bits, phase minimale (sans pré-écho)"_t)
+                                                                    : juce::String ("Polyphase 64 bits, 160 dB"), PathQuality::Enhanced);
             break;
         case PlaybackPlan::Conversion::FloatToInt:
         case PlaybackPlan::Conversion::None:
             break;
     }
 
+    if (plan.profileTag.isNotEmpty())
+    {
+        const auto eff = getEffectiveSettings();
+        path.add ("Profil", anubisProfileName (eff.anubisProfile), anubisProfileDescription (eff.anubisProfile),
+                  plan.conversion == PlaybackPlan::Conversion::None || plan.conversion == PlaybackPlan::Conversion::FloatToInt
+                      ? PathQuality::BitPerfect : PathQuality::Enhanced);
+        if (eff.warmth && (plan.conversion == PlaybackPlan::Conversion::DsdToPcm || plan.conversion == PlaybackPlan::Conversion::Resample))
+            path.add ("Modelage", "Harmoniques paires −90 dB · plateau −0,5 dB > 18 kHz"_t, "64 bits, débrayable dans les réglages"_t, PathQuality::Enhanced);
+    }
     if (plan.wire == WireFormat::DoP)
         path.add ("Transport", "DoP " + formatRate (plan.deviceRate) + " · 24 bits"_t, "Marqueurs 0x05 / 0xFA, données DSD intactes"_t, PathQuality::BitPerfect);
     if (plan.wire == WireFormat::NativeDsd)
@@ -1033,14 +1142,14 @@ SignalPath PlaybackEngine::getSignalPath() const
 
     if (plan.wire == WireFormat::Pcm)
     {
-        if (! fixedVolume.load() && volume.load() != 1.0)
+        if (! isFixedVolume() && volume.load() != 1.0)
             path.add ("Volume", juce::String (juce::Decibels::gainToDecibels (volume.load()), 1) + " dB",
                       "Numérique 64 bits + dither TPDF"_t, PathQuality::HighQuality);
         if (activeChain != nullptr && activeChain->isActive())
             path.add ("DSP", activeChain->names().joinIntoString (" · "_t), "Plug-ins DSP 64 bits", PathQuality::Enhanced);
         const bool enhancing = plan.conversion == PlaybackPlan::Conversion::Resample || plan.conversion == PlaybackPlan::Conversion::DsdToPcm
                                || (activeChain != nullptr && activeChain->isActive());
-        if (plan.needsRequantize || (! fixedVolume.load() && volume.load() != 1.0) || (activeChain != nullptr && activeChain->isActive()))
+        if (plan.needsRequantize || (! isFixedVolume() && volume.load() != 1.0) || (activeChain != nullptr && activeChain->isActive()))
             path.add ("Quantification", juce::String (deviceExactBits.load()) + " bits", "Dither TPDF",
                       enhancing ? PathQuality::Enhanced : PathQuality::HighQuality);
     }

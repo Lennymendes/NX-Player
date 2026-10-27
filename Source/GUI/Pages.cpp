@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "Pages.h"
+#include "../Engine/DeviceProfiles.h"
 #include "../Library/Downloads.h"
 #include "../Providers/StreamingProviders.h"
 #include "../Library/LibraryScanner.h"
@@ -704,6 +705,124 @@ void SettingsPage::section (const juce::String& title)
     layoutRows.push_back (r);
 }
 
+namespace
+{
+    /** Device banner (Merging Anubis, RME ADI-2): the interface, its sound profiles (one click) and a tip. */
+    class DeviceProfilePanel : public juce::Component
+    {
+    public:
+        DeviceProfilePanel (AppContext& c, DeviceFamily f, const juce::String& device, bool detected)
+            : ctx (c), family (f), deviceName (device), autoDetected (detected)
+        {
+            setRepaintsOnMouseActivity (true);
+        }
+
+        static int idealHeight (DeviceFamily) { return 286; }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto& t = ctx.theme();
+            style::paintGlass (g, *this, ctx, getLocalBounds().toFloat(), t.radius());
+            g.setColour (t.accent().withAlpha (0.35f));
+            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), t.radius(), 1.0f);
+
+            auto r = getLocalBounds().reduced (18, 14);
+            auto head = r.removeFromTop (44);
+            // interface icon: a small rack / desktop unit with its ports
+            auto icon = head.removeFromLeft (44).toFloat().reduced (2.0f);
+            g.setColour (t.accent().withAlpha (0.16f));
+            g.fillRoundedRectangle (icon, 8.0f);
+            g.setColour (t.accent());
+            g.drawRoundedRectangle (icon.reduced (8.0f, 13.0f), 3.0f, 1.6f);
+            for (int k = 0; k < 2; ++k)
+                g.fillRoundedRectangle (icon.getX() + 12.0f + (float) k * 9.0f, icon.getCentreY() - 2.5f, 6.0f, 5.0f, 1.0f);
+            g.fillEllipse (icon.getRight() - 15.0f, icon.getCentreY() - 2.5f, 5.0f, 5.0f);
+            head.removeFromLeft (12);
+            g.setColour (t.textCol());
+            g.setFont (style::font (16.0f, true));
+            g.drawText (familyTitle (family), head.removeFromTop (22), juce::Justification::centredLeft, true);
+            g.setColour (t.textDim());
+            g.setFont (style::font (12.5f));
+            g.drawText ((autoDetected ? "Détecté : "_t : "Profil choisi manuellement · "_t) + deviceName, head, juce::Justification::centredLeft, true);
+
+            r.removeFromTop (10);
+            const int count = familyProfileCount (family);
+            const int current = familyCurrentProfile (ctx.engine().getSettings(), family);
+            tiles.clear();
+            const int gap = 10;
+            const int w = (r.getWidth() - (count - 1) * gap) / juce::jmax (1, count);
+            auto row = r.removeFromTop (112);
+            for (int i = 0; i < count; ++i)
+            {
+                auto tile = row.removeFromLeft (w);
+                row.removeFromLeft (gap);
+                tiles.push_back (tile);
+                const bool on = i == current;
+                const bool hover = tile.contains (getMouseXYRelative()) && isMouseOver (true);
+                g.setColour (on ? t.accent().withAlpha (0.18f) : juce::Colours::white.withAlpha (hover ? 0.08f : 0.04f));
+                g.fillRoundedRectangle (tile.toFloat(), 10.0f);
+                g.setColour (on ? t.accent() : t.border());
+                g.drawRoundedRectangle (tile.toFloat().reduced (0.5f), 10.0f, on ? 1.6f : 1.0f);
+                auto tr = tile.reduced (12, 10);
+                g.setColour (on ? t.accent() : t.textCol());
+                g.setFont (style::font (13.5f, true));
+                g.drawText (profileName (family, i).fromFirstOccurrenceOf (juce::String::fromUTF8 ("\xe2\x80\x94 "), false, false), tr.removeFromTop (20),
+                            juce::Justification::centredLeft, true);
+                g.setColour (t.textDim());
+                g.setFont (style::font (11.5f));
+                g.drawFittedText (profileDescription (family, i), tr, juce::Justification::topLeft, 5, 0.9f);
+                if (i == 0)
+                {
+                    g.setColour (t.textDim().withAlpha (0.8f));
+                    g.setFont (style::font (10.5f, true));
+                    g.drawText ("PAR DÉFAUT"_t, tile.reduced (12, 8), juce::Justification::topRight);
+                }
+            }
+
+            r.removeFromTop (12);
+            g.setColour (t.colour ("--nx-quality-low", juce::Colour (0xffffb547)));
+            g.setFont (style::font (12.5f, true));
+            g.drawText (family == DeviceFamily::Merging ? juce::String ("Astuce MT VAD") : juce::String ("Astuce RME"), r.removeFromTop (18), juce::Justification::centredLeft);
+            g.setColour (t.textCol().withAlpha (0.85f));
+            g.setFont (style::font (12.5f));
+            const auto tip = familyTip (family).fromFirstOccurrenceOf (" : ", false, false);
+            g.drawFittedText (tip.substring (0, 1).toUpperCase() + tip.substring (1), r, juce::Justification::topLeft, 3, 0.95f);
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            for (size_t i = 0; i < tiles.size(); ++i)
+                if (tiles[i].contains (e.getPosition()))
+                {
+                    auto s = ctx.engine().getSettings();
+                    familySetProfile (s, family, (int) i);
+                    ctx.engine().setSettings (s);
+                    ctx.applyEngineSettings();
+                    ctx.showMessage ("Profil activé : "_t + profileName (family, (int) i));
+                    repaint();
+                }
+        }
+
+    private:
+        AppContext& ctx;
+        DeviceFamily family;
+        juce::String deviceName;
+        bool autoDetected;
+        std::vector<juce::Rectangle<int>> tiles;
+    };
+}
+
+void SettingsPage::fullRow (juce::Component* control, int height)
+{
+    Row r;
+    r.control = control;
+    r.height = height;
+    r.full = true;
+    owned.add (control);
+    contentComp.addAndMakeVisible (control);
+    layoutRows.push_back (r);
+}
+
 void SettingsPage::row (const juce::String& label, juce::Component* control, int height, const juce::String& help)
 {
     Row r;
@@ -754,6 +873,56 @@ void SettingsPage::refresh()
     }
     const auto status = eng.getOutputStatus();
     row (status.open ? "État : "_t + status.backendName + " · "_t + formatRate (status.sampleRate) + " · "_t + status.detail : juce::String ("État : périphérique fermé (s'ouvre à la lecture)"_t), nullptr, 28);
+
+    // Hardware profile (Merging Anubis / RAVENNA...)
+    {
+        const juce::StringArray profiles { "Automatique (détection)"_t, "Générique"_t, "Merging Anubis / RAVENNA (AES67)"_t, "RME ADI-2 (USB)" };
+        row ("Profil matériel"_t, combo (profiles, profiles[(int) s.hardwareProfile], [this, profiles] (const juce::String& v)
+        {
+            auto st = ctx.engine().getSettings();
+            st.hardwareProfile = (HardwareProfile) juce::jmax (0, profiles.indexOf (v));
+            ctx.engine().setSettings (st);
+            ctx.applyEngineSettings();
+            refresh();
+        }), 36, "Un périphérique reconnu reçoit des réglages dédiés (comme dans Roon) : Merging (« Merging », « Anubis », « RAVENNA », « VAD ») et RME (« RME », « ADI-2 »)."_t);
+
+        const auto family = activeFamily (s, eng.getDeviceName());
+        if (family != DeviceFamily::None)
+        {
+            fullRow (new DeviceProfilePanel (ctx, family, eng.getDeviceName(), s.hardwareProfile == HardwareProfile::Auto),
+                     DeviceProfilePanel::idealHeight (family));
+            if (family == DeviceFamily::Merging)
+            {
+                const juce::StringArray gains { "0 dB", "+3 dB", "+6 dB" };
+                const int gi = s.anubisDsdGainDb >= 5.0 ? 2 : s.anubisDsdGainDb >= 2.0 ? 1 : 0;
+                row ("Gain DSD -> DXD (profils Anubis)"_t, combo (gains, gains[gi], [this] (const juce::String& v)
+                {
+                    auto st = ctx.engine().getSettings();
+                    st.anubisDsdGainDb = v.startsWith ("+6") ? 6.0 : v.startsWith ("+3") ? 3.0 : 0.0;
+                    ctx.engine().setSettings (st);
+                    ctx.applyEngineSettings();
+                }), 36, "SACD 0 dB = −6 dBFS : +6 dB retrouve le niveau du PCM. Un limiteur 64 bits (plafond −0,2 dBFS) évite tout écrêtage."_t);
+                row ("Modelage harmonique (Analog Warmth)"_t, toggle (s.anubisHarmonics, [this] (bool v)
+                {
+                    auto st = ctx.engine().getSettings();
+                    st.anubisHarmonics = v;
+                    ctx.engine().setSettings (st);
+                    ctx.applyEngineSettings();
+                }), 36, "Harmonique paire d'ordre 2 à −90 dB et détente de −0,5 dB au-dessus de 18 kHz. Désactivé : filtre à phase minimale seul."_t);
+            }
+            else
+            {
+                row ("Sécurité RME DSD Direct (verrouiller le volume logiciel à 100 %)"_t, toggle (s.rmeLockVolume, [this] (bool v)
+                {
+                    auto st = ctx.engine().getSettings();
+                    st.rmeLockVolume = v;
+                    ctx.engine().setSettings (st);
+                    ctx.applyEngineSettings();
+                }), 36, "Attention : en « DSD Direct », l'ADI-2 désactive son volume matériel sur les sorties ligne. Le volume de NX Player reste "_t
+                        "à 100 % (bit-perfect) : réglez le niveau avec un contrôle analogique externe."_t);
+            }
+        }
+    }
 
     section ("DSD");
     const juce::StringArray modes { "Automatique (natif, puis DoP, puis PCM)", "DSD natif (ASIO)", "DoP (DSD over PCM)", "Conversion en PCM (DXD)" };
@@ -819,6 +988,12 @@ void SettingsPage::layoutContent (int width)
         {
             painted.push_back ({ { pad, y, inner, r.height }, r });
             y += r.height;
+            continue;
+        }
+        if (r.full)
+        {
+            r.control->setBounds (pad, y, juce::jmin (inner, 980), r.height);
+            y += r.height + 12;
             continue;
         }
         const int controlW = juce::jmin (380, inner / 2);

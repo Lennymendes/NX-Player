@@ -15,7 +15,8 @@ class DsdToPcm
 {
 public:
     /** dsdRate: 2 822 400 × 2^k; outputRate: dsdRate / (8 × 2^m), 352 800 for DXD. gain: linear (1 = SACD 0 dB -> −6 dBFS). */
-    void prepare (double dsdRate, double outputRate, int numChannels, double gain = 1.0);
+    void prepare (double dsdRate, double outputRate, int numChannels, double gain = 1.0, bool minimumPhase = false);
+    bool isMinimumPhase() const noexcept { return minPhase; }
 
     double getOutputRate() const noexcept { return outRate; }
     int getBytesPerOutputSample() const noexcept { return bytesPerOut; }
@@ -34,6 +35,7 @@ public:
 
 private:
     int channels = 2, bytesPerOut = 1, numTables = 0;
+    bool minPhase = false;
     double outRate = 352800.0;
     std::vector<double> tables;                 // numTables × 256
     std::vector<uint8_t> history;               // per channel: 2 × numTables (mirrored ring)

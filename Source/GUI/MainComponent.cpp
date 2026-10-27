@@ -491,6 +491,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0) || k == juce::KeyPress (juce::KeyPress::leftKey, juce::ModifierKeys::altModifier, 0)) { goBack(); return true; }
     if (k == juce::KeyPress (']', juce::ModifierKeys::commandModifier, 0) || k == juce::KeyPress (juce::KeyPress::rightKey, juce::ModifierKeys::altModifier, 0)) { goForward(); return true; }
     if (k == juce::KeyPress ('b', juce::ModifierKeys::commandModifier, 0)) { setSidebarVisible (! sidebarVisible); return true; }
+    // A-B loop: I = start, O = end + loop, L = off
+    if (k.getModifiers().isAnyModifierKeyDown() == false)
+    {
+        const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
+        if (c == 'i') { player.markLoopA(); return true; }
+        if (c == 'o') { player.markLoopB(); return true; }
+        if (c == 'l') { player.clearLoop(); return true; }
+    }
     return false;
 }
 

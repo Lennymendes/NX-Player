@@ -128,6 +128,27 @@ void SeekBar::paint (juce::Graphics& g)
     const float frac = length > 0 ? (float) juce::jlimit (0.0, 1.0, position / length) : 0.0f;
     g.setGradientFill (juce::ColourGradient (t.accent(), track.getX(), 0, t.accent2(), track.getRight(), 0, false));
     g.fillRoundedRectangle (track.withWidth (track.getWidth() * frac), th * 0.5f);
+
+    // A-B loop: highlighted zone and the two draggable markers
+    if (length > 0 && loopA >= 0)
+    {
+        const float xa = timeToX (loopA);
+        const float xb = loopB >= 0 ? timeToX (loopB) : xa;
+        if (loopB >= 0)
+        {
+            g.setColour (t.accent().withAlpha (0.28f));
+            g.fillRoundedRectangle (juce::Rectangle<float> (xa, track.getY() - 3.0f, juce::jmax (2.0f, xb - xa), track.getHeight() + 6.0f), 3.0f);
+        }
+        auto marker = [&] (float x, const juce::String& label)
+        {
+            g.setColour (t.accent());
+            g.fillRoundedRectangle (x - 1.0f, track.getY() - 6.0f, 2.0f, track.getHeight() + 12.0f, 1.0f);
+            g.setFont (style::font (9.5f, true));
+            g.drawText (label, juce::Rectangle<float> (x - 8.0f, r.getY() - 1.0f, 16.0f, 11.0f), juce::Justification::centred);
+        };
+        marker (xa, "A");
+        if (loopB >= 0) marker (xb, "B");
+    }
     if (over && length > 0)
     {
         g.setColour (t.textCol());
@@ -135,14 +156,70 @@ void SeekBar::paint (juce::Graphics& g)
     }
 }
 
-void SeekBar::mouseDown (const juce::MouseEvent& e) { if (length > 0) { dragging = true; position = xToTime ((float) e.x); repaint(); } }
-void SeekBar::mouseDrag (const juce::MouseEvent& e) { if (dragging) { position = xToTime ((float) e.x); repaint(); } }
+float SeekBar::timeToX (double t) const
+{
+    const auto bar = getLocalBounds().toFloat().reduced (showTimes ? 46.0f : 0.0f, 0.0f);
+    return bar.getX() + bar.getWidth() * (float) (length > 0 ? juce::jlimit (0.0, 1.0, t / length) : 0.0);
+}
+
+int SeekBar::markerAt (float x) const
+{
+    if (length <= 0) return 0;
+    if (loopB >= 0 && std::abs (x - timeToX (loopB)) < 7.0f) return 2;
+    if (loopA >= 0 && std::abs (x - timeToX (loopA)) < 7.0f) return 1;
+    return 0;
+}
+
+void SeekBar::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (markerAt ((float) e.x) != 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+}
+
+void SeekBar::mouseDown (const juce::MouseEvent& e)
+{
+    if (length <= 0) return;
+    draggingMarker = markerAt ((float) e.x);
+    if (draggingMarker != 0) return;
+    dragging = true;
+    position = xToTime ((float) e.x);
+    repaint();
+}
+
+void SeekBar::mouseDrag (const juce::MouseEvent& e)
+{
+    if (draggingMarker == 1) { loopA = juce::jlimit (0.0, loopB >= 0 ? loopB - 0.1 : length, xToTime ((float) e.x)); repaint(); return; }
+    if (draggingMarker == 2) { loopB = juce::jlimit (loopA + 0.1, length, xToTime ((float) e.x)); repaint(); return; }
+    if (dragging) { position = xToTime ((float) e.x); repaint(); }
+}
+
 void SeekBar::mouseUp (const juce::MouseEvent& e)
 {
+    if (draggingMarker != 0)
+    {
+        draggingMarker = 0;
+        if (onLoopEdited) onLoopEdited (loopA, loopB);
+        return;
+    }
     if (! dragging) return;
     dragging = false;
     position = xToTime ((float) e.x);
     if (onSeek) onSeek (position);
+}
+
+void LoopButton::paintButton (juce::Graphics& g, bool hi, bool down)
+{
+    const auto& t = ctx.theme();
+    auto r = getLocalBounds().toFloat().reduced (1.0f, 5.0f);
+    const auto c = stage == 2 ? t.accent() : stage == 1 ? t.accent2() : t.textCol().withAlpha (hi ? 1.0f : 0.8f);
+    if (stage == 2 || hi || down)
+    {
+        g.setColour ((stage == 2 ? t.accent() : juce::Colours::white).withAlpha (stage == 2 ? 0.18f : (down ? 0.14f : 0.08f)));
+        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+    }
+    g.setColour (c);
+    g.drawRoundedRectangle (r.reduced (0.5f), r.getHeight() * 0.5f, 1.2f);
+    g.setFont (style::font (11.5f, true));
+    g.drawText (stage == 1 ? juce::String ("A-") : juce::String ("A-B"), r, juce::Justification::centred);
 }
 
 //==============================================================================

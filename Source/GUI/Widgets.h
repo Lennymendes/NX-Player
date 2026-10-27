@@ -47,6 +47,7 @@ class QualityBadge : public juce::Component
 public:
     explicit QualityBadge (AppContext& c) : ctx (c) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
     void update (const juce::String& text, PathQuality q) { label = text; quality = q; repaint(); }
+    const juce::String& getLabel() const noexcept { return label; }
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override { if (onClick) onClick(); }
     std::function<void()> onClick;
@@ -69,11 +70,35 @@ public:
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
     std::function<void (double)> onSeek;
     bool showTimes = true;
+
+    /** A-B loop markers (seconds, −1 = not set). Dragging a marker calls onLoopEdited (a, b). */
+    void setLoop (double a, double b) { if (draggingMarker == 0) { loopA = a; loopB = b; repaint(); } }
+    std::function<void (double, double)> onLoopEdited;
+    void mouseMove (const juce::MouseEvent& e) override;
 private:
     double xToTime (float x) const;
+    float timeToX (double t) const;
+    int markerAt (float x) const;      // 1 = A, 2 = B, 0 = none
     AppContext& ctx;
     double position = 0, length = 0;
+    double loopA = -1.0, loopB = -1.0;
     bool dragging = false;
+    int draggingMarker = 0;
+};
+
+/** The [A-B] button of the player bar: first click = A, second = B (loop on), third = off. */
+class LoopButton : public juce::Button
+{
+public:
+    explicit LoopButton (AppContext& c) : juce::Button ("A-B"), ctx (c)
+    {
+        setWantsKeyboardFocus (false);
+        setTooltip ("Boucle A-B : 1er clic = début (I), 2e = fin et boucle (O), 3e = arrêt (L)"_t);
+    }
+    int stage = 0;   // 0 off, 1 A set, 2 looping
+    void paintButton (juce::Graphics& g, bool hi, bool down) override;
+private:
+    AppContext& ctx;
 };
 
 /** Hosts the UI plug-ins registered for one slot of the interface. */

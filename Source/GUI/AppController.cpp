@@ -222,6 +222,12 @@ void AppController::loadEngineSettings()
         s.dsdToPcmGainDb = (double) v.getProperty ("dsdGain", 0.0);
         s.exclusive = (bool) v.getProperty ("exclusive", true);
         s.bufferMilliseconds = (int) v.getProperty ("bufferMs", 0);
+        s.hardwareProfile = (HardwareProfile) juce::jlimit (0, 3, (int) v.getProperty ("hardwareProfile", 0));
+        s.rmeProfile = (RmeProfile) juce::jlimit (0, 1, (int) v.getProperty ("rmeProfile", 0));
+        s.rmeLockVolume = (bool) v.getProperty ("rmeLockVolume", true);
+        s.anubisProfile = (AnubisProfile) juce::jlimit (0, 2, (int) v.getProperty ("anubisProfile", 0));
+        s.anubisDsdGainDb = (double) v.getProperty ("anubisDsdGain", 6.0);
+        s.anubisHarmonics = (bool) v.getProperty ("anubisHarmonics", true);
     }
     eng->setSettings (s);
     const auto device = appSettings.get ("device").toString();
@@ -238,6 +244,12 @@ void AppController::saveEngineSettings()
     o->setProperty ("dsdGain", s.dsdToPcmGainDb);
     o->setProperty ("exclusive", s.exclusive);
     o->setProperty ("bufferMs", s.bufferMilliseconds);
+    o->setProperty ("hardwareProfile", (int) s.hardwareProfile);
+    o->setProperty ("anubisProfile", (int) s.anubisProfile);
+    o->setProperty ("anubisDsdGain", s.anubisDsdGainDb);
+    o->setProperty ("anubisHarmonics", s.anubisHarmonics);
+    o->setProperty ("rmeProfile", (int) s.rmeProfile);
+    o->setProperty ("rmeLockVolume", s.rmeLockVolume);
     appSettings.set ("engine", juce::var (o));
 }
 

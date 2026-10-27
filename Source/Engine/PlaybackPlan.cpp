@@ -39,6 +39,10 @@ PlaybackPlan makePlan (const StreamFormat& src, const DeviceCapabilities& caps, 
     PlaybackPlan p;
     p.source = src;
     p.channels = src.numChannels == 1 ? 2 : src.numChannels;
+    p.filterShape = s.filterShape;
+    p.profileTag = s.profileTag;
+    const juce::String filterName = s.filterShape == FilterShape::MinimumPhase ? juce::String ("filtre à phase minimale 64 bits"_t)
+                                                                               : juce::String ("filtre phase linéaire 64 bits"_t);
 
     if (src.isDsd())
     {
@@ -81,9 +85,10 @@ PlaybackPlan makePlan (const StreamFormat& src, const DeviceCapabilities& caps, 
         }
         p.ringBitsHint = 32;
         p.needsRequantize = true;
-        p.reason = juce::String (caps.nativeDsdRates.isEmpty() && ! dopOk ? "Le DAC n'accepte ni DSD natif ni DoP à ce débit : "_t
-                                                                          : "Conversion demandée : "_t)
-                   + "DSD -> PCM " + formatRate (p.deviceRate) + " (filtre phase linéaire 64 bits)"_t;
+        p.reason = juce::String (s.profileTag.isNotEmpty() ? "Profil "_t + s.profileTag + " : "
+                                 : caps.nativeDsdRates.isEmpty() && ! dopOk ? "Le DAC n'accepte ni DSD natif ni DoP à ce débit : "_t
+                                                                            : "Conversion demandée : "_t)
+                   + "DSD -> PCM " + formatRate (p.deviceRate) + " (" + filterName + ")";
         return p;
     }
 
@@ -103,7 +108,7 @@ PlaybackPlan makePlan (const StreamFormat& src, const DeviceCapabilities& caps, 
         p.ringBitsHint = 32;
         p.needsRequantize = true;
         p.reason = wanted != src.sampleRate && p.deviceRate == wanted
-                       ? "Suréchantillonnage sinc "_t + formatRate (src.sampleRate) + " -> " + formatRate (p.deviceRate)
+                       ? "Suréchantillonnage sinc "_t + formatRate (src.sampleRate) + " -> " + formatRate (p.deviceRate) + " (" + filterName + ")"
                        : "Le DAC n'accepte pas " + formatRate (src.sampleRate) + " : conversion vers " + formatRate (p.deviceRate);
     }
     else if (src.kind == SampleKind::PcmFloat)

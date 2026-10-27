@@ -16,7 +16,8 @@ public:
     /** attenuationDb: stop-band rejection (default 160 dB). passFraction: pass-band edge as a fraction
         of the lower Nyquist (0.907 keeps 20 kHz flat at 44,1 kHz). */
     void prepare (double inputRate, double outputRate, int numChannels,
-                  double attenuationDb = 160.0, double passFraction = 0.907);
+                  double attenuationDb = 160.0, double passFraction = 0.907, bool minimumPhase = false);
+    bool isMinimumPhase() const noexcept { return minPhase; }
 
     bool isIdentity() const noexcept { return L == M; }
     int getL() const noexcept { return L; }
@@ -35,6 +36,7 @@ public:
 
 private:
     int L = 1, M = 1, taps = 1, channels = 2;
+    bool minPhase = false;
     std::vector<double> phases;                   // L × taps, phase-major, reversed for direct dot product
     std::vector<std::vector<double>> buffers;     // per channel: history + pending input
     int64_t bufferStart = 0;                      // absolute index of buffers[c][0]

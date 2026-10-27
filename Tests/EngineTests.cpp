@@ -8,6 +8,10 @@
 #include "../Source/Audio/AudioDecoder.h"
 #include "../Source/DSP/DsdToPcm.h"
 #include "../Source/DSP/Resampler.h"
+#include "../Source/DSP/FilterDesign.h"
+#include "../Source/Engine/DeviceProfiles.h"
+#include "../Source/Audio/LoopingDecoder.h"
+#include <complex>
 #include "../Source/Engine/PlaybackEngine.h"
 #include "../Source/Output/CaptureBackend.h"
 #include <cmath>
@@ -582,5 +586,274 @@ NX_TEST_SECTION (108, "Moteur : seek, volume, suréchantillonnage, Signal Path")
         juce::String chain;
         for (auto& n : path.nodes) chain << n.stage << " [" << n.title << "] ";
         t.check (path.overall == nx::PathQuality::BitPerfect && path.nodes.size() >= 3, "Signal Path bit-perfect : " + chain);
+    }
+}
+
+//==============================================================================
+NX_TEST_SECTION (109, "Profils matériel : Merging Anubis / RAVENNA (DXD, phase minimale, DoP Sync Safe)")
+{
+    // Detection
+    t.check (nx::isMergingDevice ("Merging RAVENNA/AES67") && nx::isMergingDevice ("MT VAD") && nx::isMergingDevice ("ANUBIS SPS 0x1234")
+             && ! nx::isMergingDevice ("RME ADI-2 Pro") && ! nx::isMergingDevice ("FiiO KA17") && ! nx::isMergingDevice ("Invader Speakers"),
+             "détection : Merging / Anubis / RAVENNA / VAD, pas les autres DAC"_t);
+
+    // Plans for each profile on an Anubis-like device (PCM up to 384 kHz, DoP-capable)
+    nx::DeviceCapabilities caps;
+    caps.sampleRates = { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0, 352800.0, 384000.0 };
+    caps.maxBits = 24;
+    nx::StreamFormat dsd128; dsd128.kind = nx::SampleKind::Dsd; dsd128.sampleRate = 5644800.0; dsd128.bitsPerSample = 1; dsd128.codec = "DSF";
+    nx::StreamFormat dsd512 = dsd128; dsd512.sampleRate = 22579200.0;
+    nx::StreamFormat pcm441; pcm441.sampleRate = 44100.0; pcm441.bitsPerSample = 16; pcm441.codec = "FLAC";
+    nx::EngineSettings base;
+    const juce::String anubis = "Merging RAVENNA/AES67";
+
+    auto ref = nx::resolveProfile (base, anubis);
+    const auto pRefDsd = nx::makePlan (dsd128, caps, ref), pRefDsd512 = nx::makePlan (dsd512, caps, ref), pRefPcm = nx::makePlan (pcm441, caps, ref);
+    t.check (pRefDsd.wire == nx::WireFormat::Pcm && pRefDsd.conversion == nx::PlaybackPlan::Conversion::DsdToPcm && pRefDsd.deviceRate == 352800.0
+             && pRefDsd512.deviceRate == 352800.0 && ref.dsdToPcmGainDb == 6.0 && ref.limiter,
+             "Studio DXD Reference : DSD128 / DSD512 -> DXD 352,8 kHz, +6 dB + limiteur, aucun DoP"_t);
+    t.check (pRefPcm.conversion == nx::PlaybackPlan::Conversion::None && pRefPcm.deviceRate == 44100.0,
+             "Studio DXD Reference : PCM 44,1 kHz bit-perfect, sans rééchantillonnage"_t);
+    t.check (nx::pipelineLabel (pRefDsd, "Amélioré"_t) == juce::String::fromUTF8 ("DSD128 \xe2\x86\x92 DXD 352,8 kHz [Anubis Ref]"),
+             "badge : "_t + nx::pipelineLabel (pRefDsd, "Amélioré"_t));
+
+    base.anubisProfile = nx::AnubisProfile::AnalogWarmth;
+    auto warm = nx::resolveProfile (base, anubis);
+    const auto pWarmPcm = nx::makePlan (pcm441, caps, warm);
+    t.check (pWarmPcm.conversion == nx::PlaybackPlan::Conversion::Resample && pWarmPcm.deviceRate == 352800.0
+             && pWarmPcm.filterShape == nx::FilterShape::MinimumPhase && warm.warmth,
+             "Analog Warmth : PCM 44,1 -> DXD 352,8 kHz, phase minimale, modelage harmonique"_t);
+    t.check (nx::pipelineLabel (pWarmPcm, "Amélioré"_t) == juce::String::fromUTF8 ("PCM 44,1 \xe2\x86\x92 DXD [Warm]"),
+             "badge : "_t + nx::pipelineLabel (pWarmPcm, "Amélioré"_t));
+
+    base.anubisProfile = nx::AnubisProfile::PureDoP;
+    auto dop = nx::resolveProfile (base, anubis);
+    nx::StreamFormat dsd64 = dsd128; dsd64.sampleRate = 2822400.0;
+    const auto pDop = nx::makePlan (dsd64, caps, dop);
+    t.check (pDop.wire == nx::WireFormat::DoP && pDop.deviceRate == 176400.0 && dop.bufferFrames == 2048 && dop.maxChannels == 2 && dop.dopPrerollMs == 1500
+             && nx::pipelineLabel (pDop, {}) == "DSD64 DoP [Bit-Perfect]",
+             "Pure DoP : DoP 176,4 kHz, tampon 2048, 2 canaux, 1,5 s de silence DoP"_t);
+
+    base.anubisProfile = nx::AnubisProfile::StudioDxdReference;
+    t.check (nx::resolveProfile (base, "FiiO KA17").profileTag.isEmpty()
+             && nx::makePlan (dsd64, caps, nx::resolveProfile (base, "FiiO KA17")).wire == nx::WireFormat::DoP,
+             "autres DAC : réglages génériques inchangés (DoP)"_t);
+
+    // RME ADI-2 (USB)
+    const juce::String rme = "ADI-2 Pro (72241234)";
+    t.check (nx::isRmeDevice (rme) && nx::isRmeDevice ("RME ADI-2 DAC") && ! nx::isRmeDevice ("Merging RAVENNA") && ! nx::isRmeDevice ("Thermostat")
+             && nx::activeFamily (base, rme) == nx::DeviceFamily::Rme, "détection RME / ADI-2"_t);
+    auto rmeDop = nx::resolveProfile (base, rme);
+    const auto pRme = nx::makePlan (dsd128, caps, rmeDop);
+    t.check (pRme.wire == nx::WireFormat::DoP && pRme.deviceRate == 352800.0 && rmeDop.dopPrerollMs == 150 && rmeDop.lockVolume
+             && nx::makePlan (pcm441, caps, rmeDop).conversion == nx::PlaybackPlan::Conversion::None
+             && nx::pipelineLabel (pRme, {}) == "DSD128 DoP [RME Bit-Perfect]",
+             "RME SteadyClock DoP Native : DSD128 en DoP 352,8 kHz, synchro 150 ms, volume verrouillé, PCM bit-perfect"_t);
+    base.rmeProfile = nx::RmeProfile::VelvetDxd;
+    auto velvet = nx::resolveProfile (base, rme);
+    const auto pVelvet = nx::makePlan (dsd128, caps, velvet);
+    t.check (pVelvet.conversion == nx::PlaybackPlan::Conversion::DsdToPcm && pVelvet.deviceRate == 352800.0 && pVelvet.filterShape == nx::FilterShape::MinimumPhase
+             && velvet.dsdToPcmGainDb == 6.0 && ! velvet.lockVolume
+             && nx::pipelineLabel (pVelvet, {}) == juce::String::fromUTF8 ("DSD128 \xe2\x86\x92 DXD 352,8 kHz [RME Velvet]"),
+             "RME AKM Velvet DXD : DSD -> DXD 352,8 kHz +6 dB, phase minimale"_t);
+    base.rmeProfile = nx::RmeProfile::SteadyClockDoP;
+
+    // Minimum-phase filter: same magnitude, energy at the start (no pre-ringing)
+    {
+        const auto lin = nx::dsp::designLowpass (255, 0.2, 150.0);
+        const auto mp = nx::dsp::toMinimumPhase (lin);
+        auto magDb = [] (const std::vector<double>& h, double f)
+        {
+            std::complex<double> acc;
+            for (size_t n = 0; n < h.size(); ++n) acc += h[n] * std::polar (1.0, -2.0 * nx::dsp::kPi * f * (double) n);
+            return 20.0 * std::log10 (std::max (std::abs (acc), 1.0e-20));
+        };
+        double maxPassErr = 0.0, worstStop = -1000.0;
+        for (double f = 0.0; f < 0.15; f += 0.005) maxPassErr = std::max (maxPassErr, std::abs (magDb (mp, f) - magDb (lin, f)));
+        for (double f = 0.26; f < 0.5; f += 0.003) worstStop = std::max (worstStop, magDb (mp, f));
+        double total = 0.0, early = 0.0;
+        for (size_t n = 0; n < mp.size(); ++n) { total += mp[n] * mp[n]; if (n < mp.size() / 4) early += mp[n] * mp[n]; }
+        double linEarly = 0.0;
+        for (size_t n = 0; n < lin.size() / 4; ++n) linEarly += lin[n] * lin[n];
+        t.check (maxPassErr < 0.001 && worstStop < -120.0 && early / total > 0.97 && linEarly / total < 0.01,
+                 "phase minimale : bande passante identique ("_t + juce::String (maxPassErr, 5) + " dB), réjection "
+                 + juce::String (-worstStop, 0) + " dB, " + juce::String (100.0 * early / total, 2) + " % de l'énergie au début"_t);
+    }
+
+    // The whole engine on a virtual Anubis: DSD64 at −6 dBFS -> DXD with +6 dB, limited, never clipped
+    const auto dsd = dsdSine (2822400.0, 0.4, 2, 1000.0, 0.5);
+    auto f = t.tempDir.getChildFile ("anubis109.dsf");
+    writeDsf (f, dsd, 2, 2822400.0, true);
+    {
+        EngineRig rig ([&] (nx::CaptureBackend& c) { c.name = anubis; });
+        rig.engine->setDevice (anubis);
+        rig.engine->setQueue ({ EngineRig::item (f) }, 0, true);
+        bool profileNode = false;
+        rig.runToEnd (1024, 60.0, [&] (int)
+        {
+            for (auto& n : rig.engine->getSignalPath().nodes) profileNode |= n.stage == "Profil" && n.title.contains ("Studio DXD Reference");
+        });
+        const auto& got = rig.cap->capturedInt;
+        double peak = 0.0;
+        for (auto v : got) peak = std::max (peak, std::abs (v / 2147483648.0));
+        std::vector<double> l (got.size() / 2);
+        for (size_t i = 0; i < l.size(); ++i) l[i] = got[i * 2] / 2147483648.0;
+        const int skip = 20000;
+        const auto fit = l.size() > (size_t) (3 * skip) ? fitSine (l.data() + skip, (int) l.size() - 3 * skip, 1, 352800.0, 1000.0)
+                                                         : std::pair<double, double> { 0, 1 };
+        t.check (rig.cap->config.wire == nx::WireFormat::Pcm && rig.cap->config.sampleRate == 352800.0,
+                 "moteur : DSD64 -> DXD 352,8 kHz sur l'Anubis virtuelle, aucun DoP"_t);
+        t.check (fit.first > 0.95 && peak <= 0.9773 && rig.engine->getStats().clipped == 0,
+                 "+6 dB : amplitude "_t + juce::String (fit.first, 4) + ", crête " + juce::String (peak, 4) + " (limiteur −0,2 dBFS), aucun écrêtage"_t);
+        t.check (profileNode, "Signal Path : profil Anubis affiché"_t);
+    }
+
+    // Pure DoP "Sync Safe": 1,5 s of DoP silence (0x69 + markers) before the first DSD byte, 2048-frame buffer
+    {
+        EngineRig rig ([&] (nx::CaptureBackend& c) { c.name = anubis; });
+        rig.engine->setDevice (anubis);
+        auto s = rig.engine->getSettings();
+        s.anubisProfile = nx::AnubisProfile::PureDoP;
+        rig.engine->setSettings (s);
+        rig.engine->setQueue ({ EngineRig::item (f) }, 0, true);
+        rig.runToEnd();
+        const auto& got = rig.cap->capturedInt;
+        size_t idleFrames = 0;
+        bool markersOk = true;
+        uint8_t last = 0;
+        for (size_t i = 0; i + 1 < got.size(); i += 2)
+        {
+            const auto w = (uint32_t) got[i];
+            const uint8_t marker = (uint8_t) (w >> 24);
+            markersOk &= (marker == 0x05 || marker == 0xFA) && marker != last;
+            last = marker;
+            if (((w >> 16) & 0xFF) == 0x69 && ((w >> 8) & 0xFF) == 0x69) ++idleFrames; else break;
+        }
+        const size_t musicStart = idleFrames;
+        bool payloadOk = got.size() / 2 >= musicStart + 1000;
+        for (size_t i = 0; payloadOk && i < 1000; ++i)
+        {
+            const auto wl = (uint32_t) got[(musicStart + i) * 2];
+            payloadOk &= (uint8_t) (wl >> 16) == dsd[i * 4] && (uint8_t) (wl >> 8) == dsd[i * 4 + 2];
+        }
+        t.check (rig.cap->config.wire == nx::WireFormat::DoP && rig.cap->config.bufferFrames == 2048 && rig.cap->config.numChannels == 2,
+                 "Pure DoP : DoP 176,4 kHz, tampon matériel 2048, 2 canaux"_t);
+        t.check (idleFrames >= (size_t) (1.5 * 176400.0) && markersOk && payloadOk,
+                 "silence DoP de "_t + juce::String (idleFrames / 176400.0, 2) + " s (marqueurs alternés) puis DSD intact"_t);
+    }
+}
+
+//==============================================================================
+NX_TEST_SECTION (110, "Boucle A-B sans coupure : le DAC n'est jamais rouvert, fondu de 4 ms en PCM")
+{
+    bool stillRunning = false, loopWasActive = false;
+    juce::uint64 reconfigAfter = 0;
+    // PCM 44,1 kHz / 24 bits, 3 s of noise (every frame unique)
+    const int rate = 44100;
+    const auto pcm = randomPcm (rate * 3, 2, 24, 110);
+    auto f = t.tempDir.getChildFile ("loop110.wav");
+    writeWav (f, &pcm, nullptr, 2, (double) rate, 24, 24, false);
+
+    EngineRig rig;
+    rig.engine->setQueue ({ EngineRig::item (f) }, 0, true);
+    // play 0,3 s, then loop [0,5 s, 0,8 s) for 2,5 s
+    size_t mark = 0;
+    juce::uint64 reconfigBefore = 0;
+    double maxPos = 0.0, minPosAfterWrap = 1.0e9;
+    rig.runToEnd (512, 60.0, [&] (int)
+    {
+        const size_t outFrames = rig.cap->capturedInt.size() / 2;
+        if (mark == 0 && outFrames >= (size_t) (rate * 0.3))
+        {
+            mark = outFrames;
+            reconfigBefore = rig.engine->getStats().reconfigurations.load();
+            rig.engine->setLoop (0.5, 0.8);
+            juce::Thread::sleep (250);   // the virtual DAC runs faster than real time: let the decoder refill first
+        }
+        else if (mark > 0 && outFrames > mark + (size_t) (rate * 0.5))
+        {
+            const double p = rig.engine->getPositionSeconds();
+            maxPos = juce::jmax (maxPos, p);
+            minPosAfterWrap = juce::jmin (minPosAfterWrap, p);
+        }
+        if (mark > 0 && outFrames >= mark + (size_t) (rate * 2.5) && rig.engine->getState() != nx::PlaybackEngine::State::Stopped)
+        {
+            stillRunning = rig.cap->isRunning();
+            reconfigAfter = rig.engine->getStats().reconfigurations.load();
+            loopWasActive = rig.engine->isLoopActive();
+            rig.engine->stop();
+        }
+    });
+    const auto& got = rig.cap->capturedInt;
+    t.check (reconfigAfter == reconfigBefore && stillRunning && loopWasActive,
+             "le périphérique n'est ni arrêté ni rouvert pendant la boucle"_t);
+
+    // Find the loop in the output: frames of A + xf onwards repeat with a period of (B − A − xf) frames.
+    const int a = (int) (0.5 * rate), b = (int) (0.8 * rate);
+    const int xf = (int) (nx::PlaybackEngine::loopCrossfadeMs * 0.001 * rate);
+    const int period = b - a - xf;
+    const size_t frames = got.size() / 2;
+    auto frameAt = [&] (size_t i, int c) { return got[i * 2 + (size_t) c]; };
+    size_t first = 0;
+    for (size_t i = mark; i + 64 < frames && first == 0; ++i)
+    {
+        bool same = true;
+        for (int k = 0; k < 64 && same; ++k)
+            same = frameAt (i + (size_t) k, 0) == pcm[(size_t) (a + xf + k) * 2] && frameAt (i + (size_t) k, 1) == pcm[(size_t) (a + xf + k) * 2 + 1];
+        if (same) first = i;
+    }
+    int cycles = 0;
+    bool exact = first > 0;
+    for (size_t start = first; exact && start + (size_t) period < frames; start += (size_t) period, ++cycles)
+        for (int k = 0; k < period - xf && exact; ++k)
+            exact = frameAt (start + (size_t) k, 0) == pcm[(size_t) (a + xf + k) * 2] && frameAt (start + (size_t) k, 1) == pcm[(size_t) (a + xf + k) * 2 + 1];
+    t.check (exact && cycles >= 4, juce::String (cycles) + " tours de boucle, période exacte de "_t + juce::String (period)
+                                   + " trames, données bit-perfect hors des 4 ms de fondu"_t);
+
+    // The crossfade: no jump larger than the signal's own range at the wrap (continuity of the mix)
+    bool mixed = true;
+    for (size_t start = first + (size_t) (period - xf); start + (size_t) xf < frames && mixed; start += (size_t) period)
+    {
+        const auto mid = (double) frameAt (start + (size_t) xf / 2, 0);
+        const auto t0 = (double) pcm[(size_t) (b - xf + xf / 2) * 2], h0 = (double) pcm[(size_t) (a + xf / 2) * 2];
+        mixed = std::abs (mid - 0.5 * (t0 + h0)) < 0.02 * 2147483648.0;
+    }
+    t.check (mixed, "fondu enchaîné fin -> début au milieu du raccord (moitié / moitié)"_t);
+    t.check (maxPos <= 0.8 + 0.02 && minPosAfterWrap >= 0.49, "position affichée dans la boucle ("_t + juce::String (minPosAfterWrap, 2) + " – "
+                                                               + juce::String (maxPos, 2) + " s)");
+
+    rig.engine->clearLoop();
+    t.check (! rig.engine->isLoopActive(), "boucle désactivée (touche L)"_t);
+
+    // DSD in DoP: the loop cuts on DoP word boundaries, the markers keep alternating, the DAC stays locked.
+    {
+        const auto dsd = dsdSine (2822400.0, 1.5, 2, 1000.0, 0.5);
+        auto fd = t.tempDir.getChildFile ("loop110.dsf");
+        writeDsf (fd, dsd, 2, 2822400.0, true);
+        EngineRig dr;
+        dr.engine->setQueue ({ EngineRig::item (fd) }, 0, true);
+        size_t dmark = 0;
+        juce::uint64 before = 0, after = 0;
+        dr.runToEnd (512, 60.0, [&] (int)
+        {
+            const size_t n = dr.cap->capturedInt.size() / 2;
+            if (dmark == 0 && n >= 30000) { dmark = n; before = dr.engine->getStats().reconfigurations.load(); dr.engine->setLoop (0.3, 0.5); juce::Thread::sleep (250); }
+            if (dmark > 0 && n >= dmark + 176400 && dr.engine->getState() != nx::PlaybackEngine::State::Stopped)
+            {
+                after = dr.engine->getStats().reconfigurations.load();
+                dr.engine->stop();
+            }
+        });
+        const auto& got = dr.cap->capturedInt;
+        bool markers = true;
+        uint8_t last = 0;
+        for (size_t i = 0; i + 1 < got.size(); i += 2)
+        {
+            const uint8_t m = (uint8_t) ((uint32_t) got[i] >> 24);
+            markers &= (m == 0x05 || m == 0xFA) && m != last;
+            last = m;
+        }
+        t.check (dr.cap->config.wire == nx::WireFormat::DoP && markers && after == before && dmark > 0,
+                 "DoP : boucle sur des mots DoP entiers, marqueurs 0x05 / 0xFA continus, DAC jamais reconfiguré"_t);
     }
 }

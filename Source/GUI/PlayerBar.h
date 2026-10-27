@@ -17,6 +17,11 @@ public:
     void stateChanged();
     void refreshPlugins() { pluginSlot.refreshPlugins(); resized(); }
 
+    // A-B loop (button, keys I / O / L, markers on the seek bar)
+    void markLoopA();
+    void markLoopB();
+    void clearLoop();
+
     std::function<void()> onToggleLyrics, onToggleQueue, onShowSignalPath, onOpenNowPlaying;
     bool shuffle = false, repeat = false;
 
@@ -28,6 +33,9 @@ private:
     ArtworkView artwork;
     IconButton shuffleButton, prevButton, playButton, nextButton, repeatButton, miniButton, volumeButton;
     SeekBar seek;
+    LoopButton loopButton;
+    double pendingLoopA = -1.0;
+    void syncLoop();
     QualityBadge badge;
     juce::Slider volume;
     PluginSlot pluginSlot;

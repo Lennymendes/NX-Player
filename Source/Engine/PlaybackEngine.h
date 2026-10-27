@@ -16,6 +16,8 @@
 #include "../Core/SpscRing.h"
 #include "../Audio/AudioDecoder.h"
 #include "../DSP/Requantizer.h"
+#include "../DSP/OutputShaper.h"
+#include "DeviceProfiles.h"
 #include <juce_events/juce_events.h>
 #include <array>
 #include <atomic>
@@ -72,6 +74,8 @@ public:
     DeviceCapabilities getCapabilities() const;
     void setSettings (const EngineSettings& s);
     EngineSettings getSettings() const;
+    /** The settings in force for the current device (device profile applied, e.g. Merging Anubis). */
+    EngineSettings getEffectiveSettings() const;
 
     //== Queue & transport (message thread) ===================================
     void setQueue (std::vector<PlayableItem> items, int startIndex = 0, bool startPlaying = true);
@@ -86,6 +90,17 @@ public:
     void previous();
     void seek (double seconds);
 
+    //== A-B loop (gapless: the device keeps running, the decoder wraps) =======
+    /** Loops [a, b) of the current track for ever (b − a ≥ 50 ms). Re-reads from the play position once. */
+    void setLoop (double aSeconds, double bSeconds);
+    void clearLoop (bool rebuffer = true);
+    bool isLoopActive() const noexcept { return loopIndex.load() >= 0; }
+    double getLoopA() const noexcept { return loopA.load(); }
+    double getLoopB() const noexcept { return loopB.load(); }
+    int getLoopIndex() const noexcept { return loopIndex.load(); }
+    /** Crossfade at the wrap point (PCM), in milliseconds. */
+    static constexpr double loopCrossfadeMs = 4.0;
+
     State getState() const noexcept { return state.load(); }
     int getCurrentIndex() const noexcept { return currentIndex.load(); }
     double getPositionSeconds() const noexcept;
@@ -96,7 +111,9 @@ public:
     void setVolume (double gain);
     double getVolume() const noexcept { return volume.load(); }
     void setFixedVolume (bool fixed);
-    bool isFixedVolume() const noexcept { return fixedVolume.load(); }
+    /** Volume held at 100 %: by the user (bit-perfect) or by the device profile (RME DSD Direct safety). */
+    bool isFixedVolume() const noexcept { return fixedVolume.load() || profileLocksVolume.load(); }
+    bool isVolumeLockedByProfile() const noexcept { return profileLocksVolume.load(); }
     void setDspChain (std::unique_ptr<DspChain> chain);
 
     //== Status ===============================================================
@@ -160,7 +177,7 @@ private:
 
     struct RingEvent
     {
-        enum Kind : int { Track, End } kind = Track;
+        enum Kind : int { Track, End, Position } kind = Track;   // Position: the loop wrapped, the clock jumps back
         juce::int64 startByte = 0;
         juce::uint32 gen = 0;
         int itemIndex = 0;
@@ -204,6 +221,7 @@ private:
     juce::int64 bytesWritten = 0;
     std::unique_ptr<dsp::DsdToPcm> dsdConverter;
     std::unique_ptr<dsp::Resampler> resampler;
+    dsp::OutputShaper shaper;                 // warmth / limiter after a conversion (device profiles)
     std::vector<int32_t> tmpInt;
     std::vector<double> tmpDouble, tmpDouble2;
     std::vector<uint8_t> tmpBytes;
@@ -217,6 +235,7 @@ private:
     juce::int64 unitsIntoTrack = 0;
     bool prerolling = false;
     juce::int64 prerollFrames = 0;
+    juce::int64 prerollMinUnits = 0;         // forced silence after a (re)configuration (DoP "Sync Safe")
     dsp::DopPacker dop;
     std::array<dsp::Requantizer, 8> requantizers;
     double smoothedGain = 1.0;
@@ -229,6 +248,10 @@ private:
     // Shared atomics
     std::atomic<State> state { State::Stopped };
     std::atomic<int> currentIndex { -1 };
+    std::atomic<double> loopA { -1.0 }, loopB { -1.0 };
+    std::atomic<int> loopIndex { -1 };
+    class LoopingDecoder* loopDecoder = nullptr;   // decoder thread: the wrapper of the current track, if any
+    int loopWrapsSeen = 0;
     std::atomic<int> activePlanId { 0 };     // plan the device is configured for
     std::atomic<int> reconfigurePlanId { 0 };// set when the device must be reopened
     std::atomic<int> playingPlanId { 0 };
@@ -238,6 +261,7 @@ private:
     std::atomic<bool> trackChangedFlag { false }, endedFlag { false }, pathChangedFlag { false };
     std::atomic<double> volume { 1.0 };
     std::atomic<bool> fixedVolume { true };
+    std::atomic<bool> profileLocksVolume { false };
     std::atomic<DspChain*> pendingChain { nullptr };
     SpscRing<DspChain*> retiredChains { 16 };
     DspChain* activeChain = nullptr;         // audio thread (or message thread while the device is stopped)

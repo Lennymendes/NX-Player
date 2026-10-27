@@ -77,8 +77,9 @@ public:
 private:
     void section (const juce::String& title);
     void row (const juce::String& label, juce::Component* control, int height = 36, const juce::String& help = {});
+    void fullRow (juce::Component* control, int height);   // a component across the whole width (banners)
     juce::OwnedArray<juce::Component> owned;
-    struct Row { juce::String label, help; juce::Component* control = nullptr; int height = 36; bool isSection = false; };
+    struct Row { juce::String label, help; juce::Component* control = nullptr; int height = 36; bool isSection = false, full = false; };
     std::vector<Row> layoutRows;
     struct Labels : juce::Component { SettingsPage& p; explicit Labels (SettingsPage& s) : p (s) { setInterceptsMouseClicks (false, false); } void paint (juce::Graphics&) override; };
     Labels labels { *this };

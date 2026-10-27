@@ -45,7 +45,7 @@ les archives sur une étiquette `v*`.
 "build/NXPlayer_artefacts/Release/NX Player.app/Contents/MacOS/NX Player" --selftest
 ```
 
-21 sections, 169 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
+23 sections, 196 vérifications, code de sortie 0 si tout passe. Elles écrivent les fichiers de test et les
 captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 
 | # | Section | Ce qui est prouvé |
@@ -58,6 +58,8 @@ captures d'écran dans le dossier temporaire `NXPlayer_selftest`.
 | 106 | Moteur | 3 pistes 24 / 96 enchaînées sans trou ni recouvrement, 0 allocation sur le fil audio, changement de fréquence à la frontière, mono → 2 voies |
 | 107 | DSD | DoP (marqueurs alternés, charge intacte), DSD natif octet pour octet, DSD → PCM |
 | 108 | Moteur | seek à l'échantillon, volume (dither TPDF ≤ 1 LSB), suréchantillonnage, Signal Path |
+| 109 | Profils matériel | détection Merging / RME, plans des 5 profils, filtre à phase minimale (même amplitude, énergie au début), DSD64 -> DXD +6 dB limité sans écrêtage, DoP « Sync Safe » : 1,5 s de silence DoP puis DSD intact |
+| 110 | Boucle A-B | 8 tours bit-perfect hors des 4 ms de fondu, période exacte, horloge affichée dans la boucle, DoP sur mots entiers, DAC jamais reconfiguré |
 | 201–204 | Bibliothèque | tags (FLAC, ID3v2 dans WAV / DSF, MP4), SQLite + FTS5 (recherche sans accents), veille de dossiers, LRC |
 | 205 | Connecteurs | signature Qobuz, PKCE (RFC 7636), JSON Tidal / Qobuz / Spotify, MPD + fMP4 FLAC → flux FLAC identique, DIDL-Lite, SSDP, fusion des doublons |
 | 206 | NAS | serveur HTTP local → flux progressif → moteur → DAC : bit-perfect |
@@ -147,9 +149,28 @@ Identifiants des services (si le streaming est réactivé) : options CMake ou se
 | Page précédente / suivante (‹ ›) | Cmd/Ctrl + [ / ], ou Alt + ← / → |
 | Touches multimédia du clavier (lecture, suivant, précédent) | aussi quand NX Player est en arrière-plan |
 | Masquer / afficher la barre latérale | Cmd/Ctrl + B |
+| Boucle A-B : début / fin / arrêt | I / O / L |
 
 Volume : à 100 % le flux reste bit-perfect ; en dessous, volume numérique 64 bits + dither. Double-clic sur un
 morceau pour le lire, clic droit pour la file d'attente, l'album, l'artiste, les crédits.
+
+**Profils matériel** (Réglages › Sortie audio › Profil matériel, détection automatique par le nom du périphérique) :
+
+| Interface | Profil | Ce qu'il fait |
+|---|---|---|
+| Merging Anubis / RAVENNA (MT VAD) | Studio DXD Reference *(défaut)* | DSD64 à DSD512 -> DXD 352,8 kHz (FIR phase linéaire 64 bits, gain 0 / +3 / +6 dB + limiteur −0,2 dBFS) ; PCM bit-perfect ; aucun DoP sur le réseau |
+| | Analog Warmth | DSD et PCM -> DXD 352,8 / 384 kHz, filtre à phase minimale (sans pré-écho), harmonique paire −90 dB et −0,5 dB au-dessus de 18 kHz (débrayable) |
+| | Pure DoP 1-Bit | DoP 1.0, tampon 2048, 2 canaux, 1,5 s de silence DoP à chaque changement de fréquence (verrouillage PTP) |
+| RME ADI-2 (USB) | SteadyClock DoP Native *(défaut)* | DoP (jusqu'au DSD256 si l'ADI-2 annonce la fréquence), synchro 150 ms, PCM bit-perfect, option « Sécurité DSD Direct » (volume logiciel verrouillé à 100 %) |
+| | AKM Velvet DXD | DSD -> DXD 352,8 kHz +6 dB, phase minimale : l'EQ, le loudness et le crossfeed de l'ADI-2 restent utilisables |
+
+Le badge de la barre de lecture affiche le chemin actif : `DSD64 → DXD 352,8 kHz [Anubis Ref]`, `PCM 44,1 → DXD [Warm]`,
+`DSD128 DoP [RME Bit-Perfect]`.
+
+**Boucle A-B** : bouton [A-B] à côté de Répéter (1er clic = A, 2e = B et boucle, 3e = arrêt), touches I / O / L, marqueurs
+A et B déplaçables sur la barre de progression. La boucle se fait dans le décodeur : le périphérique n'est jamais arrêté
+ni reconfiguré ; fondu de 4 ms en PCM, coupure sur des mots DoP entiers en DSD. Poser ou retirer la boucle relit une fois
+le tampon depuis la position de lecture (≈ 150 ms).
 
 **Touches multimédia et « À l'écoute » du système** : macOS (`MPRemoteCommandCenter` / `MPNowPlayingInfoCenter`,
 Centre de contrôle, Touch Bar, casques) et Windows (`SystemMediaTransportControls` : touches du clavier, panneau du
