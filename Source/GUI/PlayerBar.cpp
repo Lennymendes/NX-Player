@@ -102,9 +102,28 @@ void PlayerBar::paint (juce::Graphics& g)
     g.setColour (t.textCol());
     g.setFont (style::font (14.5f, true));
     g.drawText (title, r.removeFromTop (r.getHeight() / 2), juce::Justification::bottomLeft, true);
-    g.setColour (t.textDim());
     g.setFont (style::font (13.0f));
-    g.drawText (subtitle, r, juce::Justification::topLeft, true);
+    artistRect = {};
+    if (artistText.isNotEmpty())
+    {
+        const int aw = juce::jmin (r.getWidth(), juce::roundToInt (style::textWidth (style::font (13.0f), artistText)) + 2);
+        artistRect = r.withWidth (aw).withHeight (juce::jmin (r.getHeight(), 20));
+        g.setColour (t.accent());
+        g.drawText (artistText, artistRect, juce::Justification::topLeft, true);
+        g.setColour (t.textDim());
+        if (albumText.isNotEmpty() && r.getWidth() > aw + 12)
+            g.drawText (" — "_t + albumText, r.withTrimmedLeft (aw), juce::Justification::topLeft, true);
+    }
+    else
+    {
+        g.setColour (t.textDim());
+        g.drawText (subtitle, r, juce::Justification::topLeft, true);
+    }
+}
+
+void PlayerBar::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (artistRect.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void PlayerBar::resized()
@@ -160,6 +179,11 @@ void PlayerBar::resized()
 
 void PlayerBar::mouseUp (const juce::MouseEvent& e)
 {
+    if (artistRect.contains (e.getPosition()) && artistText.isNotEmpty())
+    {
+        ctx.navigate ({ PageId::ArtistDetail, artistText });
+        return;
+    }
     if ((artwork.getBounds().contains (e.getPosition()) || textArea.contains (e.getPosition())) && onOpenNowPlaying)
         onOpenNowPlaying();
 }
@@ -217,6 +241,8 @@ void PlayerBar::trackChanged()
     if (const auto* t = ctx.currentTrack())
     {
         title = t->title;
+        artistText = t->displayArtist();
+        albumText = t->album;
         subtitle = t->displayArtist() + (t->album.isNotEmpty() ? " — "_t + t->album : juce::String());
         artwork.setArtwork (t->artworkKey, t->album.isNotEmpty() ? t->album : t->title);
     }
@@ -224,6 +250,7 @@ void PlayerBar::trackChanged()
     {
         title = "NX Player";
         subtitle = "Choisissez un morceau"_t;
+        artistText = albumText = {};
         artwork.setArtwork ({}, "NX");
     }
     stateChanged();

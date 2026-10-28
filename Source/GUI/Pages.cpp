@@ -71,7 +71,13 @@ void ListingPage::Header::paint (juce::Graphics& g)
         g.drawFittedText (page.title, r.removeFromTop (44), juce::Justification::bottomLeft, 1);
         g.setColour (t.accent());
         g.setFont (style::font (18.0f, true));
-        g.drawText (page.subtitle.upToFirstOccurrenceOf ("\n", false, false), r.removeFromTop (26), juce::Justification::centredLeft, true);
+        {
+            const auto line = page.subtitle.upToFirstOccurrenceOf ("\n", false, false);
+            auto ar = r.removeFromTop (26);
+            const int aw = juce::jmin (ar.getWidth(), juce::roundToInt (style::textWidth (style::font (18.0f, true), line)) + 2);
+            artistRect = page.heroArtist.isNotEmpty() ? ar.withWidth (aw) : juce::Rectangle<int>();
+            g.drawText (line, ar, juce::Justification::centredLeft, true);
+        }
         g.setColour (t.textDim());
         g.setFont (style::font (13.0f));
         g.drawText (page.subtitle.fromFirstOccurrenceOf ("\n", false, false), r.removeFromTop (22), juce::Justification::centredLeft, true);

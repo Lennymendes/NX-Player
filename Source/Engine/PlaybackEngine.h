@@ -237,6 +237,13 @@ private:
     bool prerolling = false;
     juce::int64 prerollFrames = 0;
     juce::int64 prerollMinUnits = 0;         // forced silence after a (re)configuration (DoP "Sync Safe")
+    // DoP lock: the timeline only starts once the hardware callback has delivered this many consecutive
+    // identical, underrun-free buffers (the driver / network clock is then stable).
+    int stableCallbacks = 0;
+    int requiredStableCallbacks = 0;
+    int lastCallbackFrames = 0;
+    juce::uint64 lastUnderruns = 0;
+    bool keepsDopCarrier() const noexcept;   // device kept open, sending the DoP silence carrier
     dsp::DopPacker dop;
     std::array<dsp::Requantizer, 8> requantizers;
     double smoothedGain = 1.0;

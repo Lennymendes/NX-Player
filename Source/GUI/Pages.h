@@ -23,6 +23,7 @@ public:
     std::function<void (ListingPage&)> loader;
     juce::String title, subtitle, listTitle, gridTitle;
     juce::String heroArtwork;           // album detail: big artwork on the left of the title
+    juce::String heroArtist;            // album detail: artist (blue, clickable)
     bool hero = false;
     std::vector<TrackInfo> heroTracks;  // what "Lire" / "Aléatoire" play
     AlbumGrid grid;
@@ -60,7 +61,22 @@ public:
 private:
     std::unique_ptr<juce::Component> captionOwner;
     void changeListenerCallback (juce::ChangeBroadcaster*) override { contentComp.repaint(); }
-    struct Header : juce::Component { ListingPage& page; explicit Header (ListingPage& p) : page (p) {} void paint (juce::Graphics&) override; };
+    struct Header : juce::Component
+    {
+        ListingPage& page;
+        juce::Rectangle<int> artistRect;     // album page: clickable artist name
+        explicit Header (ListingPage& p) : page (p) {}
+        void paint (juce::Graphics&) override;
+        void mouseMove (const juce::MouseEvent& e) override
+        {
+            setMouseCursor (artistRect.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (page.hero && page.heroArtist.isNotEmpty() && artistRect.contains (e.getPosition()))
+                page.ctx.navigate ({ PageId::ArtistDetail, page.heroArtist });
+        }
+    };
     Header header { *this };
     ArtworkView heroArt;
     juce::TextButton playAll { "Lire" }, shuffleAll { "Aléatoire"_t }, downloadAll { "Télécharger"_t }, cta;

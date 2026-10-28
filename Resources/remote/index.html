@@ -101,6 +101,23 @@ async function cmd(c, extra) {
 }
 document.querySelectorAll('button[data-c]').forEach(b => b.onclick = () => cmd(b.dataset.c));
 
+// Swipe on the player card (cover + controls): left = next track, right = previous (threshold 50 px)
+{
+  const card = $('art').closest('section');
+  card.style.touchAction = 'pan-y';
+  let sx = null, sy = 0;
+  card.addEventListener('touchstart', e => {
+    if (e.target.closest('input')) { sx = null; return; }   // the seek bar keeps its own gesture
+    sx = e.changedTouches[0].clientX; sy = e.changedTouches[0].clientY;
+  }, { passive: true });
+  card.addEventListener('touchend', e => {
+    if (sx === null) return;
+    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    sx = null;
+    if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) cmd(dx < 0 ? 'next' : 'prev');
+  }, { passive: true });
+}
+
 async function poll() {
   try {
     const r = await fetch('/api/state?k=' + encodeURIComponent(k));

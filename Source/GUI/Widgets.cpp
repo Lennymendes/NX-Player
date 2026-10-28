@@ -568,6 +568,7 @@ void TrackList::setTracks (std::vector<TrackInfo> t, bool art, bool alb, bool nu
     tracks = std::move (t);
     artwork = art; album = alb; numbered = num;
     hover = selected = -1;
+    artistRects.clear();
     repaint();
 }
 
@@ -575,6 +576,8 @@ void TrackList::mouseMove (const juce::MouseEvent& e)
 {
     const int i = e.y / rowHeight;
     if (i != hover) { hover = i < (int) tracks.size() ? i : -1; repaint(); }
+    const bool overArtist = i >= 0 && i < (int) artistRects.size() && artistRects[(size_t) i].contains (e.getPosition());
+    setMouseCursor (overArtist ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void TrackList::mouseDown (const juce::MouseEvent&) { dragStarted = false; }
@@ -609,6 +612,11 @@ void TrackList::mouseUp (const juce::MouseEvent& e)
     const auto track = tracks[(size_t) i];
     if (! e.mods.isPopupMenu())
     {
+        if (i < (int) artistRects.size() && artistRects[(size_t) i].contains (e.getPosition()))
+        {
+            ctx.navigate ({ PageId::ArtistDetail, track.displayArtist() });
+            return;
+        }
         if (i < (int) downloadButtons.size() && downloadButtons[(size_t) i].contains (e.getPosition()))
             download ({ track });
         if (i < (int) heartButtons.size() && heartButtons[(size_t) i].contains (e.getPosition()) && track.id > 0)
@@ -823,9 +831,22 @@ void TrackList::paint (juce::Graphics& g)
         g.setColour (isPlaying ? t.accent() : t.textCol());
         g.setFont (style::font (14.0f, true));
         g.drawText (tr.title, r.removeFromTop (r.getHeight() / 2).withTrimmedRight (12), juce::Justification::bottomLeft, true);
+        {
+            // artist name: accent colour, hand cursor, opens the artist page
+            g.setColour (t.accent());
+            g.setFont (style::font (13.0f));
+            if ((int) artistRects.size() != (int) tracks.size()) artistRects.assign (tracks.size(), {});
+            const auto area = r.withTrimmedRight (12);
+            const auto artist = tr.displayArtist();
+            const int aw = juce::jmin (area.getWidth(), juce::roundToInt (style::textWidth (style::font (13.0f), artist)) + 2);
+            auto ar = area.withWidth (aw).withHeight (juce::jmin (area.getHeight(), 20));
+            artistRects[(size_t) i] = artist.isNotEmpty() ? ar : juce::Rectangle<int>();
+            g.drawText (artist, ar, juce::Justification::topLeft, true);
+            if (i == hover && getMouseXYRelative().y / rowHeight == i && ar.contains (getMouseXYRelative()))
+                g.fillRect (ar.getX(), ar.getY() + 17, aw, 1);
+        }
         g.setColour (t.textDim());
         g.setFont (style::font (13.0f));
-        g.drawText (tr.displayArtist(), r.withTrimmedRight (12), juce::Justification::topLeft, true);
         if (! albumCol.isEmpty())
             g.drawText (tr.album, albumCol, juce::Justification::centredLeft, true);
     }

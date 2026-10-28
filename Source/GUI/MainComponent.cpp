@@ -384,6 +384,7 @@ void MainComponent::open (const PageRequest& r)
     auto& lib = ctx.library();
     listing.hero = false;
     listing.heroArtwork = {};
+    listing.heroArtist = {};
     listing.heroTracks.clear();
     listing.topSlot = nullptr;
     listing.ctaText = {};
@@ -525,6 +526,7 @@ void MainComponent::open (const PageRequest& r)
                 for (auto& t : tracks) { dur += t.duration; year = juce::jmax (year, t.year); if (art.isEmpty()) art = t.artworkKey; if (t.source.startsWith ("upnp")) nas = t.source; }
                 if (! tracks.empty()) badge = tracks.front().resolutionBadge();
                 p.heroArtwork = art;
+                p.heroArtist = r.a;
                 p.subtitle = r.a + "\n" + (year > 0 ? juce::String (year) + " · "_t : juce::String()) + juce::String ((int) tracks.size()) + " morceaux · "_t
                              + style::formatTime (dur) + (badge.isNotEmpty() ? " · "_t + badge : juce::String())
                              + (nas.isNotEmpty() ? " · "_t + ctx.networkSourceLabel (nas) : juce::String());
@@ -597,7 +599,29 @@ void MainComponent::open (const PageRequest& r)
             listing.loader = [this, &lib, r] (ListingPage& p)
             {
                 p.title = "Recherche"; p.subtitle = "« "_t + r.a + " »"_t + "  ·  bibliothèque + sources connectées"_t;
-                p.grid.setAlbums ({});
+                // matching artists first: round cards that open the artist page
+                {
+                    std::vector<AlbumInfo> cards;
+                    juce::StringArray names;
+                    for (auto& a : lib.getArtists())
+                        if (a.name.containsIgnoreCase (r.a) && cards.size() < 12)
+                        {
+                            AlbumInfo c; c.title = a.name; c.artist = juce::String (a.albumCount) + " albums"_t;
+                            c.artworkKey = a.artworkKey;
+                            if (auto m = lib.getArtistMeta (a.name); m && m->imageUrl.isNotEmpty()) c.artworkKey = m->imageUrl;
+                            cards.push_back (c);
+                            names.add (a.name);
+                        }
+                    ctx.artistInfo().prefetch (names);
+                    p.grid.roundArt = ! cards.empty();
+                    p.grid.libraryAlbums = cards.empty();
+                    p.grid.setAlbums (cards);
+                    if (! cards.empty())
+                    {
+                        p.grid.onOpen = [this] (const AlbumInfo& a) { navigate ({ PageId::ArtistDetail, a.title }); };
+                        p.grid.onPlay = [this] (const AlbumInfo& a) { ctx.playTracks (ctx.library().getArtistTracks (a.title), 0); };
+                    }
+                }
                 p.list.setTracks (lib.search (r.a, 200));
                 p.heroTracks = p.list.getTracks();
                 juce::Component::SafePointer<MainComponent> safe (this);
@@ -614,7 +638,9 @@ void MainComponent::open (const PageRequest& r)
         default: break;
     }
     listing.refresh();
+    listing.scrollToTop();
     showPage (&listing);
+    listing.scrollToTop();
 }
 
 void MainComponent::refreshCurrentPage()

@@ -28,6 +28,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override { setMouseCursor (juce::MouseCursor::NormalCursor); }
     void trackChanged();
     void stateChanged();
     void refreshPlugins() { pluginSlot.refreshPlugins(); resized(); }
@@ -60,7 +62,8 @@ private:
     juce::Slider volume;
     PluginSlot pluginSlot;
     juce::Rectangle<int> textArea;
-    juce::String title, subtitle;
+    juce::String title, subtitle, artistText, albumText;
+    juce::Rectangle<int> artistRect;     // clickable artist name (opens the artist page)
 };
 
 } // namespace nx

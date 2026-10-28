@@ -120,14 +120,14 @@ void OnboardingWizard::layoutStep()
     nasButton.setVisible (sources);
     nasAddress.setVisible (sources);
     nasConnect.setVisible (sources);
-    auto body = c.reduced (40, 0).withTrimmedTop (150).withTrimmedBottom (90);
+    auto body = c.reduced (40, 0).withTrimmedTop (178).withTrimmedBottom (90);
     if (sources)
     {
         auto left = body.removeFromLeft (body.getWidth() / 2 - 12);
-        folderButton.setBounds (left.withHeight (40).withY (left.getY() + 64).withWidth (juce::jmin (left.getWidth(), 300)));
+        folderButton.setBounds (left.withHeight (40).withY (left.getY() + 76).withWidth (juce::jmin (left.getWidth(), 300)));
         auto right = body.withTrimmedLeft (24);
-        nasButton.setBounds (right.withHeight (40).withY (right.getY() + 64).withWidth (juce::jmin (right.getWidth(), 340)));
-        auto addr = right.withHeight (36).withY (right.getY() + 116);
+        nasButton.setBounds (right.withHeight (40).withY (right.getY() + 76).withWidth (juce::jmin (right.getWidth(), 340)));
+        auto addr = right.withHeight (36).withY (right.getY() + 128);
         nasConnect.setBounds (addr.removeFromRight (100));
         addr.removeFromRight (8);
         nasAddress.setBounds (addr);
@@ -139,7 +139,7 @@ void OnboardingWizard::layoutStep()
         deviceBox.clear (juce::dontSendNotification);
         deviceBox.addItemList (ctx.engine().getBackend().getDeviceNames(), 1);
         deviceBox.setText (ctx.engine().getDeviceName(), juce::dontSendNotification);
-        deviceBox.setBounds (c.getX() + 40 + (c.getWidth() - 80) / 2 + 20, c.getY() + 150 + 6, juce::jmin (380, (c.getWidth() - 80) / 2 - 20), 34);
+        deviceBox.setBounds (c.getX() + 40 + (c.getWidth() - 80) / 2 + 20, c.getY() + 178 + 6, juce::jmin (380, (c.getWidth() - 80) / 2 - 20), 34);
     }
     for (auto* b : { &skipButton, &backButton, &nextButton, &folderButton, &nasButton, &nasConnect }) b->toFront (false);
 }
@@ -489,7 +489,7 @@ void OnboardingWizard::paintSources (juce::Graphics& g, juce::Rectangle<int> r)
         g.drawText (f, in.removeFromTop (22).withTrimmedLeft (24), juce::Justification::centredLeft, true);
     }
     auto nasIn = block (r, style::Icon::Network, "NAS / Jellyfin"_t, "Serveur UPnP / DLNA (MinimServer, Synology, Jellyfin…)"_t);
-    nasIn.removeFromTop (120);
+    nasIn.removeFromTop (108);
     g.setColour (t.textDim());
     g.setFont (style::font (12.5f));
     g.drawText (nasStatus, nasIn.removeFromTop (22), juce::Justification::centredLeft, true);

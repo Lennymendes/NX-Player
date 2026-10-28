@@ -9,6 +9,13 @@
 namespace nx::style
 {
 
+inline float textWidth (const juce::Font& f, const juce::String& text)
+{
+    juce::GlyphArrangement ga;
+    ga.addLineOfText (f, text, 0.0f, 0.0f);
+    return ga.getBoundingBox (0, -1, true).getWidth();
+}
+
 inline juce::Font font (float size, bool bold = false)
 {
     return juce::Font (juce::FontOptions (size, bold ? juce::Font::bold : juce::Font::plain));

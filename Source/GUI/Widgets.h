@@ -194,7 +194,7 @@ public:
     int getTotalHeight() const { return (int) tracks.size() * rowHeight + 8; }
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
-    void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { hover = -1; setMouseCursor (juce::MouseCursor::NormalCursor); repaint(); }
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     const std::vector<TrackInfo>& getTracks() const noexcept { return tracks; }
@@ -211,6 +211,7 @@ private:
     std::vector<TrackInfo> tracks;
     std::vector<juce::Rectangle<int>> downloadButtons;   // per row, filled while painting (remote tracks only)
     std::vector<juce::Rectangle<int>> heartButtons;
+    std::vector<juce::Rectangle<int>> artistRects;      // per row: clickable artist name (opens the artist page)
     bool artwork = true, album = true, numbered = false;
     int hover = -1, selected = -1;
     bool dragStarted = false;
@@ -224,6 +225,8 @@ public:
     void resized() override;
     juce::Component& content() { return contentComp; }
     void setContentHeight (int h);
+    /** Always open a page at its top (after the content has been laid out). */
+    void scrollToTop() { viewport.setViewPosition (0, 0); }
     virtual void layoutContent (int width) = 0;
     virtual void refresh() {}
     void paint (juce::Graphics&) override {}

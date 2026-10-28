@@ -15,6 +15,8 @@ namespace
 {
     constexpr size_t kRingBytes = 8u << 20;      // 8 Mo: ~2,7 s of stereo DXD 384 kHz, ~3 s of DSD512
     constexpr int kChunkFrames = 8192;
+    constexpr int kDopMinPrerollMs = 400;        // true DSD silence (0x05/0xFA markers + 0x69) before the first music
+    constexpr int kDopStableCallbacks = 30;      // consecutive stable hardware buffers before the timeline starts
     constexpr uint8_t kDsdIdle = 0x69;           // DSD silence pattern
 
     inline int32_t doubleToInt32 (double x) noexcept
@@ -206,11 +208,18 @@ void PlaybackEngine::stop()
     }
     stopDecoding = true;
     flushGen.fetch_add (1);                      // the audio thread drops everything
+    reconfigurePlanId = 0;
+    positionUnits = 0;
+    if (keepsDopCarrier())
+    {
+        // DoP carrier keep-alive: the device stays open and keeps sending 0x05/0xFA + 0x69 silence, so the
+        // DAC never loses its DSD lock between tracks or after a stop (released on device / backend change).
+        if (onStateChanged) onStateChanged();
+        return;
+    }
     if (deviceRunning) { backend->stop(); deviceRunning = false; }
     backend->close();
     activePlanId = 0;
-    reconfigurePlanId = 0;
-    positionUnits = 0;
     if (onStateChanged) onStateChanged();
 }
 
@@ -763,6 +772,13 @@ bool PlaybackEngine::consumeEvents (const PlanWire& active) noexcept
     return haveCurrent;
 }
 
+bool PlaybackEngine::keepsDopCarrier() const noexcept
+{
+    if (! deviceRunning) return false;
+    const auto& w = planWires[(size_t) (activePlanId.load() & 63)];
+    return w.valid && w.wire == WireFormat::DoP;
+}
+
 bool PlaybackEngine::checkPreroll (size_t unitBytes, double unitsPerSecond, int requestedUnits) noexcept
 {
     if (! prerolling) return true;
@@ -774,7 +790,10 @@ bool PlaybackEngine::checkPreroll (size_t unitBytes, double unitsPerSecond, int 
     for (size_t i = 0; i < numPending; ++i) endQueued |= pendingEvents[i].kind == RingEvent::End;
     // A forced minimum (DoP "Sync Safe" after a rate change) keeps sending DoP silence while the network
     // clock (PTP) locks, before the first byte of music.
-    const bool minimumDone = prerollFrames >= prerollMinUnits;
+    // The 30-stable-buffers gate never blocks forever: after 2 s past the minimum the music starts anyway.
+    const bool minimumDone = prerollFrames >= prerollMinUnits
+                             && (stableCallbacks >= requiredStableCallbacks
+                                 || prerollFrames > prerollMinUnits + (juce::int64) (2.0 * unitsPerSecond));
     if (minimumDone && (ring.readable() >= wanted || endQueued || prerollFrames > (juce::int64) unitsPerSecond + prerollMinUnits))
     {
         prerolling = false;
@@ -804,6 +823,13 @@ void PlaybackEngine::outputSilenceInt (int32_t* const* ch, int numCh, int n) noe
 void PlaybackEngine::renderInt (int32_t* const* out, int numCh, int numFrames) noexcept
 {
     stats.callbacks.fetch_add (1, std::memory_order_relaxed);
+    {
+        const auto u = stats.underruns.load (std::memory_order_relaxed);
+        if (numFrames == lastCallbackFrames && u == lastUnderruns) { if (stableCallbacks < 1000000) ++stableCallbacks; }
+        else stableCallbacks = 0;
+        lastCallbackFrames = numFrames;
+        lastUnderruns = u;
+    }
 
     if (auto* p = pendingChain.exchange (nullptr))
     {
@@ -1042,12 +1068,18 @@ bool PlaybackEngine::configureDevice (int planId)
     if (activeChain != nullptr) activeChain->prepare (status.sampleRate > 0 ? status.sampleRate : plan.deviceRate, plan.channels, maxBlock);
 
     dop.markerToggle = false;
-    // The device is stopped: the audio-thread state can be set directly. DoP "Sync Safe": silence first.
-    if (plan.wire == WireFormat::DoP && s.dopPrerollMs > 0)
+    stableCallbacks = 0;
+    lastCallbackFrames = 0;
+    lastUnderruns = stats.underruns.load();
+    requiredStableCallbacks = 0;
+    // The device is stopped: the audio-thread state can be set directly. DoP: real DSD silence first
+    // (never PCM zeros), at least 400 ms, then wait for 30 stable hardware buffers.
+    if (plan.wire == WireFormat::DoP)
     {
         prerolling = true;
         prerollFrames = 0;
-        prerollMinUnits = (juce::int64) (s.dopPrerollMs * plan.deviceRate / 1000.0);
+        prerollMinUnits = (juce::int64) (juce::jmax (s.dopPrerollMs, kDopMinPrerollMs) * plan.deviceRate / 1000.0);
+        requiredStableCallbacks = kDopStableCallbacks;
     }
     activePlanId = planId;
     int expected = planId;
@@ -1078,9 +1110,12 @@ void PlaybackEngine::timerCallback()
     if (endedFlag.exchange (false))
     {
         state = State::Stopped;
-        if (deviceRunning) { backend->stop(); deviceRunning = false; }
-        backend->close();
-        activePlanId = 0;
+        if (! keepsDopCarrier())
+        {
+            if (deviceRunning) { backend->stop(); deviceRunning = false; }
+            backend->close();
+            activePlanId = 0;
+        }
         if (onQueueFinished) onQueueFinished();
         if (onStateChanged) onStateChanged();
     }
