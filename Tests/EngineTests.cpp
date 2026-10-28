@@ -461,11 +461,15 @@ NX_TEST_SECTION (107, "Moteur : DoP, DSD natif, DSD -> PCM")
         rig.runToEnd();
         const auto& got = rig.cap->capturedInt;
         bool markersOk = true, payloadOk = true;
-        size_t frames = juce::jmin (got.size() / 2, dsd.size() / 4);
+        // The stream starts with the DoP pre-roll (true DSD silence 0x69, >= 400 ms): skip it, then the music.
+        size_t pre = 0;
+        while (pre < got.size() / 2 && ((uint32_t) got[pre * 2] & 0xFFFF00) == 0x696900 && ((uint32_t) got[pre * 2 + 1] & 0xFFFF00) == 0x696900) ++pre;
+        const size_t avail = got.size() / 2 > pre ? got.size() / 2 - pre : 0;
+        size_t frames = juce::jmin (avail, dsd.size() / 4);
         uint8_t lastMarker = 0;
         for (size_t i = 0; i < frames; ++i)
         {
-            const auto wl = (uint32_t) got[i * 2], wr = (uint32_t) got[i * 2 + 1];
+            const auto wl = (uint32_t) got[(pre + i) * 2], wr = (uint32_t) got[(pre + i) * 2 + 1];
             const uint8_t ml = (uint8_t) (wl >> 24), mr = (uint8_t) (wr >> 24);
             markersOk &= (ml == 0x05 || ml == 0xFA) && ml == mr && ml != lastMarker && (wl & 0xFF) == 0;
             lastMarker = ml;
@@ -475,6 +479,7 @@ NX_TEST_SECTION (107, "Moteur : DoP, DSD natif, DSD -> PCM")
         t.check (rig.cap->config.wire == nx::WireFormat::DoP && rig.cap->config.sampleRate == 176400.0,
                  "DSD64 -> DoP à 176,4 kHz"_t);
         t.check (markersOk, "marqueurs DoP 0x05 / 0xFA alternés sur "_t + juce::String ((int) frames) + " trames");
+        t.check (pre >= 70560, "pré-roll DoP : au moins 400 ms de silence DSD (0x69) avant la musique"_t);
         t.check (payloadOk, "charge DSD intacte dans les mots DoP");
         t.check (rig.engine->getSignalPath().overall == nx::PathQuality::BitPerfect, "Signal Path : bit-perfect");
     }
