@@ -783,7 +783,9 @@ bool PlaybackEngine::checkPreroll (size_t unitBytes, double unitsPerSecond, int 
 {
     if (! prerolling) return true;
     // Wait for 150 ms of data (or the end of the queue, or 1 s at most) before starting after a seek.
-    const auto wanted = (size_t) (0.15 * unitsPerSecond) * unitBytes;
+    // Cold DoP start (device just opened): 800 ms of data, never more than half the ring.
+    const double wantedSeconds = coldPreroll.load (std::memory_order_relaxed) ? 0.8 : 0.15;
+    const auto wanted = std::min ((size_t) (wantedSeconds * unitsPerSecond) * unitBytes, ring.capacity() / 2);
     RingEvent pendingEvents[4];
     const auto numPending = events.peek (pendingEvents, 4);
     bool endQueued = false;
@@ -794,10 +796,11 @@ bool PlaybackEngine::checkPreroll (size_t unitBytes, double unitsPerSecond, int 
     const bool minimumDone = prerollFrames >= prerollMinUnits
                              && (stableCallbacks >= requiredStableCallbacks
                                  || prerollFrames > prerollMinUnits + (juce::int64) (2.0 * unitsPerSecond));
-    if (minimumDone && (ring.readable() >= wanted || endQueued || prerollFrames > (juce::int64) unitsPerSecond + prerollMinUnits))
+    if (minimumDone && (ring.readable() >= wanted || endQueued || prerollFrames > (juce::int64) (2.0 * unitsPerSecond) + prerollMinUnits))
     {
         prerolling = false;
         prerollMinUnits = 0;
+        coldPreroll.store (false, std::memory_order_relaxed);
         return true;
     }
     prerollFrames += requestedUnits;
@@ -1038,8 +1041,10 @@ bool PlaybackEngine::configureDevice (int planId)
     cfg.numChannels = plan.channels;
     cfg.sourceBits = plan.ringBitsHint;
     cfg.exclusive = s.exclusive;
-    cfg.bufferFrames = s.bufferFrames > 0 ? s.bufferFrames
-                     : s.bufferMilliseconds > 0 ? (int) (s.bufferMilliseconds * plan.deviceRate / 1000.0) : 0;
+    // A manual buffer (ms) always wins; "Automatique" gets 2048 frames for DoP and for Merging / Anubis / RAVENNA.
+    cfg.bufferFrames = s.bufferMilliseconds > 0 ? (int) (s.bufferMilliseconds * plan.deviceRate / 1000.0)
+                     : s.bufferFrames > 0 ? s.bufferFrames
+                     : (plan.wire == WireFormat::DoP || isMergingDevice (dev)) ? 2048 : 0;
 
     juce::String err;
     if (! backend->open (cfg, err))
@@ -1068,6 +1073,7 @@ bool PlaybackEngine::configureDevice (int planId)
     if (activeChain != nullptr) activeChain->prepare (status.sampleRate > 0 ? status.sampleRate : plan.deviceRate, plan.channels, maxBlock);
 
     dop.markerToggle = false;
+    coldPreroll.store (false, std::memory_order_relaxed);
     stableCallbacks = 0;
     lastCallbackFrames = 0;
     lastUnderruns = stats.underruns.load();
@@ -1080,6 +1086,7 @@ bool PlaybackEngine::configureDevice (int planId)
         prerollFrames = 0;
         prerollMinUnits = (juce::int64) (juce::jmax (s.dopPrerollMs, kDopMinPrerollMs) * plan.deviceRate / 1000.0);
         requiredStableCallbacks = kDopStableCallbacks;
+        coldPreroll.store (true, std::memory_order_relaxed);
     }
     activePlanId = planId;
     int expected = planId;
@@ -1101,6 +1108,22 @@ void PlaybackEngine::timerCallback()
     const int rp = reconfigurePlanId.load();
     if (rp != 0 && state.load() != State::Stopped)
         configureDevice (rp);
+
+    // DoP carrier idling in Stopped: release the DAC (Hog Mode, MT VAD) after 10 s. Paused keeps it, resume stays instant.
+    if (state.load() == State::Stopped && keepsDopCarrier())
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (stoppedAtMs == 0) stoppedAtMs = now;
+        else if (now - stoppedAtMs >= 10000)
+        {
+            backend->stop();
+            deviceRunning = false;
+            backend->close();
+            activePlanId = 0;
+            stoppedAtMs = 0;
+        }
+    }
+    else stoppedAtMs = 0;
 
     if (trackChangedFlag.exchange (false))
     {

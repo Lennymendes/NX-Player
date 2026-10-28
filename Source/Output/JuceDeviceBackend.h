@@ -60,7 +60,11 @@ private:
 /** CoreAudio extras that JUCE does not expose (implemented in CoreAudioExclusive_mac.cpp). */
 namespace coreaudio
 {
-    bool setHogMode (const juce::String& deviceName, bool take, juce::String& error);
+    /** On a refusal because another process owns the DAC, ownerPid / ownerName tell who. */
+    bool setHogMode (const juce::String& deviceName, bool take, juce::String& error, int* ownerPid = nullptr, juce::String* ownerName = nullptr);
+    /** Writes kAudioDevicePropertyNominalSampleRate and polls every 20 ms until the driver confirms it (or timeoutMs).
+        No wait if the device already runs at that rate. Returns true when the rate is confirmed. */
+    bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs);
     /** Picks the deepest integer physical format at that rate and disables mixing. Returns its bit depth (0 = unchanged). */
     int setIntegerPhysicalFormat (const juce::String& deviceName, double sampleRate, int preferredBits, juce::String& error);
     juce::Array<double> getNominalSampleRates (const juce::String& deviceName);

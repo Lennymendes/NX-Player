@@ -78,11 +78,42 @@ bool JuceDeviceBackend::open (const OutputConfig& c, juce::String& error)
     config = c;
     status = {};
 
+    const bool hogBefore = hogged;
+    // A failed open must not leave the DAC hogged by a closed device (only if we just took it).
+    auto releaseIfNew = [&]
+    {
+       #if JUCE_MAC
+        if (hogged && ! hogBefore)
+        {
+            juce::String e;
+            coreaudio::setHogMode (config.deviceName, false, e);
+            hogged = false;
+        }
+       #else
+        juce::ignoreUnused (hogBefore);
+       #endif
+    };
+
    #if JUCE_MAC
     if (typeName == "CoreAudio" && c.exclusive)
     {
-        juce::String hogError;
-        hogged = coreaudio::setHogMode (c.deviceName, true, hogError);
+        // Hog Mode before the stream; up to 3 tries 200 ms apart (a previous owner may be letting go).
+        juce::String hogError, ownerName;
+        int ownerPid = -1;
+        for (int attempt = 0; attempt < 3 && ! hogged; ++attempt)
+        {
+            if (attempt > 0) juce::Thread::sleep (200);
+            hogged = coreaudio::setHogMode (c.deviceName, true, hogError, &ownerPid, &ownerName);
+        }
+        if (! hogged && c.wire == WireFormat::DoP)
+        {
+            // DoP through the system mixer would be played as PCM: full-scale noise. Never fall back to shared.
+            error = "DoP impossible : le Hog Mode est refusé ("_t + hogError + ")"
+                    + (ownerPid > 0 ? " — processus "_t + juce::String (ownerPid) + (ownerName.isNotEmpty() ? " (" + ownerName + ")" : juce::String()) : juce::String());
+            device.reset();
+            return false;
+        }
+        if (hogged) coreaudio::setNominalRateAndWait (c.deviceName, c.sampleRate, 1500);
     }
    #endif
 
@@ -90,18 +121,20 @@ bool JuceDeviceBackend::open (const OutputConfig& c, juce::String& error)
     outputs.setRange (0, c.numChannels, true);
     const int buffer = c.bufferFrames > 0 ? c.bufferFrames : device->getDefaultBufferSize();
     const auto err = device->open ({}, outputs, c.sampleRate, buffer);
-    if (err.isNotEmpty()) { error = err; return false; }
+    if (err.isNotEmpty()) { error = err; releaseIfNew(); return false; }
 
     if (std::abs (device->getCurrentSampleRate() - c.sampleRate) > 0.5)
     {
         error = "le périphérique a refusé "_t + formatRate (c.sampleRate) + " (" + formatRate (device->getCurrentSampleRate()) + ")";
         device->close();
+        releaseIfNew();
         return false;
     }
     if (device->getActiveOutputChannels().countNumberOfSetBits() < c.numChannels)
     {
         error = "pas assez de sorties (" + juce::String (c.numChannels) + " demandées)"_t;
         device->close();
+        releaseIfNew();
         return false;
     }
 

@@ -9,6 +9,7 @@
 #if JUCE_MAC
 #include <CoreAudio/CoreAudio.h>
 #include <unistd.h>
+#include <libproc.h>
 #include <vector>
 
 namespace nx::coreaudio
@@ -75,7 +76,7 @@ namespace
     }
 }
 
-bool setHogMode (const juce::String& deviceName, bool take, juce::String& error)
+bool setHogMode (const juce::String& deviceName, bool take, juce::String& error, int* ownerPid, juce::String* ownerName)
 {
     const auto dev = findDevice (deviceName);
     if (dev == kAudioObjectUnknown) { error = "périphérique CoreAudio introuvable"_t; return false; }
@@ -89,7 +90,17 @@ bool setHogMode (const juce::String& deviceName, bool take, juce::String& error)
     if (take)
     {
         if (owner == me) return true;
-        if (owner != -1) { error = "le DAC est déjà réservé par un autre logiciel (Hog Mode)"_t; return false; }
+        if (owner != -1)
+        {
+            error = "le DAC est déjà réservé par un autre logiciel (Hog Mode)"_t;
+            if (ownerPid != nullptr) *ownerPid = (int) owner;
+            if (ownerName != nullptr)
+            {
+                char nm[256] = {};
+                if (proc_name (owner, nm, sizeof (nm)) > 0) *ownerName = juce::String::fromUTF8 (nm);
+            }
+            return false;
+        }
         pid_t wanted = me;
         if (AudioObjectSetPropertyData (dev, &addr, 0, nullptr, sizeof (wanted), &wanted) != noErr)
         {
@@ -145,6 +156,27 @@ int setIntegerPhysicalFormat (const juce::String& deviceName, double sampleRate,
 
     juce::ignoreUnused (preferredBits);
     return chosenBits;
+}
+
+bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs)
+{
+    const auto dev = findDevice (deviceName);
+    if (dev == kAudioObjectUnknown) return false;
+    AudioObjectPropertyAddress addr { kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, kMain };
+    auto current = [&]
+    {
+        Float64 r = 0; UInt32 sz = sizeof (r);
+        return AudioObjectGetPropertyData (dev, &addr, 0, nullptr, &sz, &r) == noErr ? (double) r : 0.0;
+    };
+    if (std::abs (current() - sampleRate) < 0.5) return true;     // already there: no wait
+    Float64 wanted = sampleRate;
+    if (AudioObjectSetPropertyData (dev, &addr, 0, nullptr, sizeof (wanted), &wanted) != noErr) return false;
+    for (int waited = 0; waited < timeoutMs; waited += 20)
+    {
+        juce::Thread::sleep (20);
+        if (std::abs (current() - sampleRate) < 0.5) return true;
+    }
+    return false;   // the check after open() decides
 }
 
 juce::Array<double> getNominalSampleRates (const juce::String& deviceName)
