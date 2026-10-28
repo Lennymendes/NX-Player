@@ -50,6 +50,7 @@ private:
     ExactSampleEncoder encoder;
     bool exactFloatPath = true;      // CoreAudio: k / 2^31 is exact for 24 significant bits
     bool hogged = false;
+    juce::uint32 lastCloseMs = 0;    // when close() last released a device (CoreAudio re-open guard)
     std::atomic<RenderCallback*> callback { nullptr };
     juce::HeapBlock<int32_t> intBuffer;
     juce::HeapBlock<int32_t*> intPtrs;

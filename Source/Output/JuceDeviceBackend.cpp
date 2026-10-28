@@ -73,7 +73,13 @@ bool JuceDeviceBackend::open (const OutputConfig& c, juce::String& error)
         device.reset (type->createDevice (c.deviceName, {}));
         if (device == nullptr) { error = "périphérique introuvable : "_t + c.deviceName; return false; }
     }
-    if (device->isOpen()) device->close();
+    if (device->isOpen()) { device->close(); if (typeName == "CoreAudio") juce::Thread::sleep (50); }
+    // A device closed a moment ago may still be purging its previous session (MT VAD / PTP): short guard.
+    if (typeName == "CoreAudio" && lastCloseMs != 0)
+    {
+        const auto since = juce::Time::getMillisecondCounter() - lastCloseMs;
+        if (since < 50) juce::Thread::sleep ((int) (50 - since));
+    }
 
     config = c;
     status = {};
@@ -97,12 +103,12 @@ bool JuceDeviceBackend::open (const OutputConfig& c, juce::String& error)
    #if JUCE_MAC
     if (typeName == "CoreAudio" && c.exclusive)
     {
-        // Hog Mode before the stream; up to 3 tries 200 ms apart (a previous owner may be letting go).
+        // Hog Mode before the stream; up to 5 tries 50 ms apart (the kernel may still be releasing a dead owner's lock).
         juce::String hogError, ownerName;
         int ownerPid = -1;
-        for (int attempt = 0; attempt < 3 && ! hogged; ++attempt)
+        for (int attempt = 0; attempt < 5 && ! hogged; ++attempt)
         {
-            if (attempt > 0) juce::Thread::sleep (200);
+            if (attempt > 0) juce::Thread::sleep (50);
             hogged = coreaudio::setHogMode (c.deviceName, true, hogError, &ownerPid, &ownerName);
         }
         if (! hogged && c.wire == WireFormat::DoP)
@@ -120,7 +126,14 @@ bool JuceDeviceBackend::open (const OutputConfig& c, juce::String& error)
     juce::BigInteger outputs;
     outputs.setRange (0, c.numChannels, true);
     const int buffer = c.bufferFrames > 0 ? c.bufferFrames : device->getDefaultBufferSize();
-    const auto err = device->open ({}, outputs, c.sampleRate, buffer);
+    // CoreAudio: the driver may refuse while it tears the previous session down: up to 3 tries, 50 ms apart.
+    juce::String err;
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        if (attempt > 0) { device->close(); juce::Thread::sleep (50); }
+        err = device->open ({}, outputs, c.sampleRate, buffer);
+        if (err.isEmpty() || typeName != "CoreAudio") break;
+    }
     if (err.isNotEmpty()) { error = err; releaseIfNew(); return false; }
 
     if (std::abs (device->getCurrentSampleRate() - c.sampleRate) > 0.5)
@@ -212,6 +225,7 @@ void JuceDeviceBackend::close()
     hogged = false;
     device.reset();
     status.open = false;
+    lastCloseMs = juce::Time::getMillisecondCounter();
 }
 
 OutputStatus JuceDeviceBackend::getStatus() const { return status; }
