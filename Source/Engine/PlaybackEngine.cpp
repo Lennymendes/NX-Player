@@ -1098,25 +1098,80 @@ bool PlaybackEngine::configureDevice (int planId)
     pathChangedFlag = true;
     if (! deviceRunning)
     {
-        // The stream never started: say so (the timeline would otherwise sit at 0:00 forever) and let go of the DAC.
         audioLog ("Moteur : le peripherique n'a pas demarre (plan " + juce::String (planId) + ")");
-        const juce::String msg = "Sortie audio : le périphérique n'a pas démarré (journal : "_t + audioLogFile().getFullPathName() + ")";
-        {
-            std::lock_guard<std::mutex> l (controlLock);
-            lastError = msg;
-        }
-        state = State::Stopped;
-        backend->close();
-        activePlanId = 0;
-        errorFlag = true;
-        if (onStateChanged) onStateChanged();
+        abortDeviceStart ("Sortie audio : le périphérique n'a pas démarré (journal : "_t + audioLogFile().getFullPathName() + ")");
         return false;
     }
     startedAtMs = juce::Time::getMillisecondCounter();
     callbacksAtStart = stats.callbacks.load();
+    watchStage = 0; watchRetries = 0; watchConfirmed = false;
     audioLog ("Moteur : flux demarre, " + formatRate (plan.deviceRate) + (plan.wire == WireFormat::DoP ? " DoP" : "")
               + ", tampon " + juce::String (backend->getStatus().bufferFrames));
     return true;
+}
+
+/** The stream never started or the device never clocks it: say so (the timeline would otherwise sit at 0:00)
+    and let go of the DAC. */
+void PlaybackEngine::abortDeviceStart (const juce::String& why)
+{
+    {
+        std::lock_guard<std::mutex> l (controlLock);
+        lastError = why;
+    }
+    state = State::Stopped;
+    if (deviceRunning) { backend->stop(); deviceRunning = false; }
+    backend->close();
+    activePlanId = 0;
+    startedAtMs = 0;
+    errorFlag = true;
+    if (onStateChanged) onStateChanged();
+}
+
+/** After a start, wait for real callbacks (a hardware clock that really runs), log the first seconds, and restart
+    the stream up to twice when nothing arrives: this replaces guessing with a measurement. */
+void PlaybackEngine::watchDeviceStart()
+{
+    if (startedAtMs == 0) return;
+    if (! deviceRunning || state.load() == State::Stopped) { startedAtMs = 0; return; }
+
+    const auto now = juce::Time::getMillisecondCounter();
+    const auto elapsed = now - startedAtMs;
+    const auto cbs = stats.callbacks.load() - callbacksAtStart;
+    static constexpr juce::uint32 stages[] = { 500, 1000, 2500, 5000 };
+    while (watchStage < 4 && elapsed >= stages[watchStage])
+    {
+        audioLog ("Moteur : +" + juce::String ((int) stages[watchStage]) + " ms, callbacks " + juce::String ((juce::int64) cbs)
+                  + ", sous-alimentations " + juce::String ((juce::int64) stats.underruns.load())
+                  + ", position " + juce::String (getPositionSeconds(), 2) + " s, ring " + juce::String ((juce::int64) ring.readable()) + " octets");
+        ++watchStage;
+    }
+    if (! backend->isRealtime()) { if (watchStage >= 4) startedAtMs = 0; return; }
+
+    if (! watchConfirmed && cbs >= 8)
+    {
+        watchConfirmed = true;
+        audioLog ("Moteur : flux confirme, " + juce::String ((juce::int64) cbs) + " callbacks en " + juce::String ((int) elapsed) + " ms");
+    }
+    if (! watchConfirmed && elapsed >= 1500)
+    {
+        if (watchRetries >= 2)
+        {
+            audioLog ("Moteur : aucun callback apres 2 redemarrages du flux, abandon");
+            abortDeviceStart ("Sortie audio : le DAC ne cadence pas le flux (aucun buffer reçu). Journal : "_t + audioLogFile().getFullPathName());
+            return;
+        }
+        ++watchRetries;
+        audioLog ("Moteur : " + juce::String ((juce::int64) cbs) + " callbacks en 1,5 s, redemarrage du flux (essai " + juce::String (watchRetries) + ")");
+        backend->stop();
+        stableCallbacks = 0; lastCallbackFrames = 0;       // the device is stopped: audio-thread state can be set directly
+        deviceRunning = backend->start (this);
+        if (! deviceRunning) { abortDeviceStart ("Sortie audio : le périphérique n'a pas redémarré (journal : "_t + audioLogFile().getFullPathName() + ")"); return; }
+        startedAtMs = juce::Time::getMillisecondCounter();
+        callbacksAtStart = stats.callbacks.load();
+        watchStage = 0;
+        return;
+    }
+    if (watchStage >= 4 && watchConfirmed) startedAtMs = 0;
 }
 
 void PlaybackEngine::timerCallback()
@@ -1130,14 +1185,7 @@ void PlaybackEngine::timerCallback()
     if (rp != 0 && state.load() != State::Stopped)
         configureDevice (rp);
 
-    // 2.5 s after a start: record whether the device really delivers buffers and whether the timeline moves.
-    if (startedAtMs != 0 && juce::Time::getMillisecondCounter() - startedAtMs >= 2500)
-    {
-        startedAtMs = 0;
-        audioLog ("Moteur : 2,5 s apres le demarrage, callbacks +" + juce::String ((juce::int64) (stats.callbacks.load() - callbacksAtStart))
-                  + ", sous-alimentations " + juce::String ((juce::int64) stats.underruns.load())
-                  + ", position " + juce::String (getPositionSeconds(), 2) + " s, ring " + juce::String ((juce::int64) ring.readable()) + " octets");
-    }
+    watchDeviceStart();
 
     // DoP carrier idling in Stopped: release the DAC (Hog Mode, MT VAD) after 10 s. Paused keeps it, resume stays instant.
     if (state.load() == State::Stopped && keepsDopCarrier())

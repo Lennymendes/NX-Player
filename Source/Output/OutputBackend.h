@@ -75,6 +75,9 @@ public:
     virtual void close() = 0;
     virtual OutputStatus getStatus() const = 0;
 
+    /** False for backends that are pulled by hand (tests, benchmarks): no hardware clock delivers callbacks by itself. */
+    virtual bool isRealtime() const noexcept { return true; }
+
     /** Set by the backend when the device asked for a reset (rate changed elsewhere, unplugged...). Message thread. */
     std::function<void (const juce::String& reason)> onDeviceError;
 

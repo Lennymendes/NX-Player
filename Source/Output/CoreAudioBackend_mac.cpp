@@ -207,11 +207,11 @@ private:
         audioLog ("CoreAudio : frequence nominale confirmee " + formatRate ((double) rate));
         // 4. integer stream format, physical and virtual, read back
         AudioStreamBasicDescription fmt {};
-        if (! applyIntegerFormat (c, fmt)) { audioLog ("CoreAudio : aucun format entier exploitable, repli sur JUCE"); closeNative(); return Result::SoftFail; }
+        if (! applyIntegerFormat (c, fmt)) { audioLog ("CoreAudio : aucun format entier exploitable, repli sur JUCE (rien n'est restaure, le Hog Mode est conserve)"); abandonForFallback(); return Result::SoftFail; }
         bytesPerChannel = bytesPerChannelOf (fmt);
         validBits = (int) fmt.mBitsPerChannel;
         alignedHigh = (fmt.mFormatFlags & kAudioFormatFlagIsAlignedHigh) != 0;
-        if (bytesPerChannel < 2 || bytesPerChannel > 4) { closeNative(); return Result::SoftFail; }
+        if (bytesPerChannel < 2 || bytesPerChannel > 4) { audioLog ("CoreAudio : taille de mot inattendue " + juce::String (bytesPerChannel)); abandonForFallback(); return Result::SoftFail; }
         audioLog ("CoreAudio : format entier " + juce::String (validBits) + " bits, " + juce::String (bytesPerChannel) + " octets par voie, "
                   + (alignedHigh ? "aligne haut" : "aligne bas") + ", " + juce::String ((int) fmt.mChannelsPerFrame) + " voies");
 
@@ -220,7 +220,7 @@ private:
             AudioObjectPropertyAddress mix { kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal, kMain };
             Boolean settable = false;
             if (AudioObjectIsPropertySettable (dev, &mix, &settable) == noErr && settable)
-                setProp (dev, kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal, (UInt32) 0);
+            { setProp (dev, kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal, (UInt32) 0); mixingTouched = true; }
         }
 
         // 6. buffer size (clamped to what the device accepts)
@@ -242,7 +242,7 @@ private:
         {
             procId = nullptr;
             audioLog ("CoreAudio : AudioDeviceCreateIOProcID a echoue, repli sur JUCE");
-            closeNative();
+            abandonForFallback();
             return Result::SoftFail;
         }
 
@@ -267,14 +267,35 @@ private:
         return Result::Ok;
     }
 
-    /** Picks the deepest integer format at that rate, sets it as physical AND virtual format, reads it back. */
+    static juce::String describe (const AudioStreamBasicDescription& d)
+    {
+        return formatRate (d.mSampleRate) + " " + juce::String ((int) d.mBitsPerChannel) + " bits, " + juce::String ((int) d.mBytesPerFrame) + " octets/trame, "
+               + juce::String ((int) d.mChannelsPerFrame) + " voies, "
+               + ((d.mFormatFlags & kAudioFormatFlagIsFloat) != 0 ? "float" : (d.mFormatFlags & kAudioFormatFlagIsSignedInteger) != 0 ? "entier" : "autre")
+               + ((d.mFormatFlags & kAudioFormatFlagIsBigEndian) != 0 ? " big-endian" : "")
+               + ((d.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0 ? " non-entrelace" : " entrelace")
+               + ((d.mFormatFlags & kAudioFormatFlagIsAlignedHigh) != 0 ? " aligne-haut" : "");
+    }
+
+    /** Picks the deepest integer format at that rate, sets it as physical AND virtual format, reads it back.
+        Everything it finds and every reason for a refusal goes to the log (what MT VAD really offers). */
     bool applyIntegerFormat (const OutputConfig& c, AudioStreamBasicDescription& out)
     {
         juce::ignoreUnused (c);
         bool first = true;
+        int streamIndex = 0;
         for (auto& s : saved_streams)
         {
+            const auto label = "CoreAudio : flux " + juce::String (streamIndex++) + " ";
+            audioLog (label + "format virtuel actuel : " + describe (s.virt));
+            audioLog (label + "format physique actuel : " + describe (s.physical));
             const auto formats = getArray<AudioStreamRangedDescription> (s.id, kAudioStreamPropertyAvailablePhysicalFormats, kAudioObjectPropertyScopeGlobal);
+            int shown = 0;
+            for (auto& f : formats)
+                if (shown++ < 40)
+                    audioLog (label + "physique disponible : " + describe (f.mFormat) + " (" + formatRate (f.mSampleRateRange.mMinimum) + " a " + formatRate (f.mSampleRateRange.mMaximum) + ")");
+            if (formats.empty()) audioLog (label + "aucun format physique disponible (liste vide)");
+
             const AudioStreamBasicDescription* best = nullptr;
             for (auto& f : formats)
             {
@@ -285,22 +306,25 @@ private:
                     || (f.mFormat.mBitsPerChannel == best->mBitsPerChannel && f.mFormat.mChannelsPerFrame > best->mChannelsPerFrame))
                     best = &f.mFormat;
             }
-            if (best == nullptr) return false;
+            if (best == nullptr) { audioLog (label + "refus : aucun format entier a cette frequence"); return false; }
 
             AudioStreamBasicDescription want = *best;
             want.mSampleRate = config.sampleRate;
-            if (! setProp (s.id, kAudioStreamPropertyPhysicalFormat, kAudioObjectPropertyScopeGlobal, want)) return false;
-            if (! setProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, want)) return false;
+            formatsTouched = true;
+            if (! setProp (s.id, kAudioStreamPropertyPhysicalFormat, kAudioObjectPropertyScopeGlobal, want)) { audioLog (label + "refus : ecriture du format physique (" + describe (want) + ")"); return false; }
+            if (! setProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, want)) { audioLog (label + "refus : ecriture du format virtuel entier (" + describe (want) + ")"); return false; }
 
             AudioStreamBasicDescription got {};
-            if (! getProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, got)) return false;
-            if (! isUsableInteger (got) || std::abs (got.mSampleRate - config.sampleRate) > 0.5) return false;
+            if (! getProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, got)) { audioLog (label + "refus : relecture du format virtuel"); return false; }
+            audioLog (label + "format virtuel relu : " + describe (got));
+            if (! isUsableInteger (got) || std::abs (got.mSampleRate - config.sampleRate) > 0.5) { audioLog (label + "refus : le format relu n'est pas l'entier demande"); return false; }
 
             if (first) { out = got; first = false; }
             else if (bytesPerChannelOf (got) != bytesPerChannelOf (out) || got.mBitsPerChannel != out.mBitsPerChannel
                      || (got.mFormatFlags & kAudioFormatFlagIsAlignedHigh) != (out.mFormatFlags & kAudioFormatFlagIsAlignedHigh))
-                return false;   // streams with different layouts: leave it to the JUCE path
+            { audioLog (label + "refus : flux de dispositions differentes"); return false; }
         }
+        if (first) audioLog ("CoreAudio : aucun flux de sortie");
         return ! first;
     }
 
@@ -323,39 +347,37 @@ private:
         saved = true;
     }
 
+    /** Puts back what WE changed: stream formats and the mixing flag. The nominal rate is never touched: a rate
+        change makes the VAD / Anubis renegotiate the network stream, it must only happen when the user plays at another rate. */
     void restoreState()
     {
         if (! saved || dev == kAudioObjectUnknown) return;
-        // formats first (they depend on the rate range), then mixing, then the rate itself
-        for (auto& s : saved_streams)
-        {
-            if (s.physical.mFormatID != 0) setProp (s.id, kAudioStreamPropertyPhysicalFormat, kAudioObjectPropertyScopeGlobal, s.physical);
-            if (s.virt.mFormatID != 0) setProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, s.virt);
-        }
-        if (savedMixingValid)
+        if (formatsTouched)
+            for (auto& s : saved_streams)
+            {
+                if (s.physical.mFormatID != 0) setProp (s.id, kAudioStreamPropertyPhysicalFormat, kAudioObjectPropertyScopeGlobal, s.physical);
+                if (s.virt.mFormatID != 0) setProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, s.virt);
+            }
+        if (savedMixingValid && mixingTouched)
         {
             AudioObjectPropertyAddress mix { kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal, kMain };
             Boolean settable = false;
             if (AudioObjectIsPropertySettable (dev, &mix, &settable) == noErr && settable)
                 setProp (dev, kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal, savedMixing);
         }
-        if (savedRate > 0.0)
-        {
-            Float64 now = 0;
-            getProp (dev, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, now);
-            if (std::abs ((double) now - savedRate) > 0.5)
-            {
-                setProp (dev, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, (Float64) savedRate);
-                for (int waited = 0; waited < 500; waited += 20)   // let the driver finish before we let go
-                {
-                    juce::Thread::sleep (20);
-                    getProp (dev, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, now);
-                    if (std::abs ((double) now - savedRate) < 0.5) break;
-                }
-            }
-        }
+        formatsTouched = mixingTouched = false;
         saved = false;
         saved_streams.clear();
+    }
+
+    /** The JUCE path takes over right after: put the formats back, keep the Hog Mode and the rate as they are
+        (releasing and re-taking them within milliseconds is what unsettles the driver). */
+    void abandonForFallback()
+    {
+        releaseIoProc();
+        restoreState();
+        dev = kAudioObjectUnknown;
+        hogged = false;
     }
 
     void releaseIoProc()
@@ -370,7 +392,7 @@ private:
     {
         if (dev == kAudioObjectUnknown) return;
         releaseIoProc();
-        audioLog ("CoreAudio : fermeture, etat d'origine retabli");
+        audioLog ("CoreAudio : fermeture (formats remis, frequence laissee telle quelle)");
         restoreState();
         if (hogged)
         {
@@ -482,7 +504,7 @@ private:
     bool alignedHigh = true;
 
     // state found at the first open, put back at close
-    bool saved = false, savedMixingValid = false;
+    bool saved = false, savedMixingValid = false, formatsTouched = false, mixingTouched = false;
     double savedRate = 0.0;
     UInt32 savedMixing = 1;
     std::vector<SavedStream> saved_streams;

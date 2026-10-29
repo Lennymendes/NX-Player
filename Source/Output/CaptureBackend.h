@@ -53,6 +53,7 @@ public:
     }
 
     bool start (RenderCallback* cb) override { callback = cb; return true; }
+    bool isRealtime() const noexcept override { return false; }
     void stop() override { callback = nullptr; }
     void close() override { callback = nullptr; status.open = false; }
     OutputStatus getStatus() const override { return status; }
