@@ -240,6 +240,8 @@ private:
     // DoP lock: the timeline only starts once the hardware callback has delivered this many consecutive
     // identical, underrun-free buffers (the driver / network clock is then stable).
     std::atomic<bool> coldPreroll { false };  // device just opened in DoP: ask for 800 ms in the ring
+    juce::uint32 startedAtMs = 0;            // message thread: device started, diagnostics due 2.5 s later
+    juce::uint64 callbacksAtStart = 0;
     juce::uint32 stoppedAtMs = 0;            // message thread: when the DoP carrier started idling in Stopped
     int stableCallbacks = 0;
     int requiredStableCallbacks = 0;

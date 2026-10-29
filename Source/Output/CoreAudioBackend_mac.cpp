@@ -10,6 +10,7 @@
 //  - DoP: the carrier keeps running 100 ms before the IOProc is stopped (clean end of the stream).
 //  - when no usable integer format exists the JUCE path is used instead (same behaviour as before).
 #include "JuceDeviceBackend.h"
+#include "../Core/AudioLog.h"
 
 #if JUCE_MAC
 #include <CoreAudio/CoreAudio.h>
@@ -115,7 +116,15 @@ public:
         if (useJuce) return juceBackend->start (cb);
         if (dev == kAudioObjectUnknown || procId == nullptr) return false;
         callback.store (cb);
-        running = AudioDeviceStart (dev, procId) == noErr;
+        // The driver may still be settling after a rate / format change: 3 tries, 100 ms apart.
+        OSStatus err = noErr;
+        for (int attempt = 0; attempt < 3 && ! running; ++attempt)
+        {
+            if (attempt > 0) juce::Thread::sleep (100);
+            err = AudioDeviceStart (dev, procId);
+            running = err == noErr;
+            audioLog ("CoreAudio : AudioDeviceStart essai " + juce::String (attempt + 1) + " -> " + juce::String ((int) err));
+        }
         if (! running) callback.store (nullptr);
         return running;
     }
@@ -158,6 +167,8 @@ private:
         config = c;
         status = {};
 
+        audioLog ("CoreAudio : ouverture " + c.deviceName + " | " + formatRate (c.sampleRate) + " | " + juce::String (c.numChannels)
+                  + " voies | tampon demande " + juce::String (c.bufferFrames) + (c.wire == WireFormat::DoP ? " | DoP" : " | PCM"));
         // 1. Hog Mode: 5 tries 50 ms apart (the kernel may still be releasing a dead owner's lock).
         juce::String hogError, ownerName;
         int ownerPid = -1;
@@ -178,7 +189,9 @@ private:
         }
 
         // 2. what the device looks like now (put back at close)
+        audioLog (juce::String ("CoreAudio : Hog Mode obtenu") + (ownerPid > 0 ? " (ancien proprietaire " + juce::String (ownerPid) + ")" : juce::String()));
         if (! saved) saveState();
+        audioLog ("CoreAudio : etat d'origine sauvegarde, frequence " + formatRate (savedRate) + ", " + juce::String ((int) saved_streams.size()) + " flux de sortie");
 
         // 3. sample rate: written, then confirmed by the driver (1500 ms at most) before any stream exists
         coreaudio::setNominalRateAndWait (c.deviceName, c.sampleRate, 1500);
@@ -191,13 +204,16 @@ private:
             return Result::HardFail;
         }
 
+        audioLog ("CoreAudio : frequence nominale confirmee " + formatRate ((double) rate));
         // 4. integer stream format, physical and virtual, read back
         AudioStreamBasicDescription fmt {};
-        if (! applyIntegerFormat (c, fmt)) { closeNative(); return Result::SoftFail; }
+        if (! applyIntegerFormat (c, fmt)) { audioLog ("CoreAudio : aucun format entier exploitable, repli sur JUCE"); closeNative(); return Result::SoftFail; }
         bytesPerChannel = bytesPerChannelOf (fmt);
         validBits = (int) fmt.mBitsPerChannel;
         alignedHigh = (fmt.mFormatFlags & kAudioFormatFlagIsAlignedHigh) != 0;
         if (bytesPerChannel < 2 || bytesPerChannel > 4) { closeNative(); return Result::SoftFail; }
+        audioLog ("CoreAudio : format entier " + juce::String (validBits) + " bits, " + juce::String (bytesPerChannel) + " octets par voie, "
+                  + (alignedHigh ? "aligne haut" : "aligne bas") + ", " + juce::String ((int) fmt.mChannelsPerFrame) + " voies");
 
         // 5. no mixing between us and the driver (settable while hogged)
         {
@@ -225,10 +241,12 @@ private:
         if (AudioDeviceCreateIOProcID (dev, &CoreAudioBackend::ioProc, this, &procId) != noErr || procId == nullptr)
         {
             procId = nullptr;
+            audioLog ("CoreAudio : AudioDeviceCreateIOProcID a echoue, repli sur JUCE");
             closeNative();
             return Result::SoftFail;
         }
 
+        audioLog ("CoreAudio : IOProc cree, tampon " + juce::String ((int) frames) + " trames");
         // status shown in the Signal Path
         UInt32 latency = 0, safety = 0;
         getProp (dev, kAudioDevicePropertyLatency, kAudioObjectPropertyScopeOutput, latency);
@@ -352,6 +370,7 @@ private:
     {
         if (dev == kAudioObjectUnknown) return;
         releaseIoProc();
+        audioLog ("CoreAudio : fermeture, etat d'origine retabli");
         restoreState();
         if (hogged)
         {

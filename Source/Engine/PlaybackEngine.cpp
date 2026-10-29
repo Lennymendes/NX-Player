@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "PlaybackEngine.h"
+#include "../Core/AudioLog.h"
 #include "../Audio/MemoryPlayStream.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../DSP/DsdToPcm.h"
@@ -1095,7 +1096,27 @@ bool PlaybackEngine::configureDevice (int planId)
 
     deviceRunning = backend->start (this);
     pathChangedFlag = true;
-    return deviceRunning;
+    if (! deviceRunning)
+    {
+        // The stream never started: say so (the timeline would otherwise sit at 0:00 forever) and let go of the DAC.
+        audioLog ("Moteur : le peripherique n'a pas demarre (plan " + juce::String (planId) + ")");
+        const juce::String msg = "Sortie audio : le périphérique n'a pas démarré (journal : "_t + audioLogFile().getFullPathName() + ")";
+        {
+            std::lock_guard<std::mutex> l (controlLock);
+            lastError = msg;
+        }
+        state = State::Stopped;
+        backend->close();
+        activePlanId = 0;
+        errorFlag = true;
+        if (onStateChanged) onStateChanged();
+        return false;
+    }
+    startedAtMs = juce::Time::getMillisecondCounter();
+    callbacksAtStart = stats.callbacks.load();
+    audioLog ("Moteur : flux demarre, " + formatRate (plan.deviceRate) + (plan.wire == WireFormat::DoP ? " DoP" : "")
+              + ", tampon " + juce::String (backend->getStatus().bufferFrames));
+    return true;
 }
 
 void PlaybackEngine::timerCallback()
@@ -1108,6 +1129,15 @@ void PlaybackEngine::timerCallback()
     const int rp = reconfigurePlanId.load();
     if (rp != 0 && state.load() != State::Stopped)
         configureDevice (rp);
+
+    // 2.5 s after a start: record whether the device really delivers buffers and whether the timeline moves.
+    if (startedAtMs != 0 && juce::Time::getMillisecondCounter() - startedAtMs >= 2500)
+    {
+        startedAtMs = 0;
+        audioLog ("Moteur : 2,5 s apres le demarrage, callbacks +" + juce::String ((juce::int64) (stats.callbacks.load() - callbacksAtStart))
+                  + ", sous-alimentations " + juce::String ((juce::int64) stats.underruns.load())
+                  + ", position " + juce::String (getPositionSeconds(), 2) + " s, ring " + juce::String ((juce::int64) ring.readable()) + " octets");
+    }
 
     // DoP carrier idling in Stopped: release the DAC (Hog Mode, MT VAD) after 10 s. Paused keeps it, resume stays instant.
     if (state.load() == State::Stopped && keepsDopCarrier())
