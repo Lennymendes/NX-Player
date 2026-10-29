@@ -117,6 +117,8 @@ public:
         if (useJuce) return juceBackend->start (cb);
         if (dev == kAudioObjectUnknown || procId == nullptr) return false;
         callback.store (cb);
+        if (pcmLead) pcmTail.store (true);              // PCM silence first (see openNative)
+        const auto ioBefore = ioCount.load();
         // The driver may still be settling after a rate / format change: 3 tries, 100 ms apart.
         OSStatus err = noErr;
         for (int attempt = 0; attempt < 3 && ! running; ++attempt)
@@ -126,6 +128,15 @@ public:
             running = err == noErr;
             audioLog ("CoreAudio : AudioDeviceStart essai " + juce::String (attempt + 1) + " -> " + juce::String ((int) err));
         }
+        if (running && pcmLead)
+        {
+            // Wait for 30 buffers of the new clock (1.5 s at most), then hand over to the engine (DoP pre-roll).
+            int waited = 0;
+            while (waited < 1500 && ioCount.load() - ioBefore < 30) { juce::Thread::sleep (10); waited += 10; }
+            audioLog ("CoreAudio : amorce PCM, " + juce::String ((juce::int64) (ioCount.load() - ioBefore)) + " buffers en " + juce::String (waited) + " ms, passage au DoP");
+        }
+        pcmLead = false;
+        pcmTail.store (false);
         if (! running) callback.store (nullptr);
         return running;
     }
@@ -206,6 +217,8 @@ private:
         audioLog ("CoreAudio : etat d'origine sauvegarde, frequence " + formatRate (savedRate) + ", " + juce::String ((int) saved_streams.size()) + " flux de sortie");
 
         // 3. sample rate: written, then confirmed by the driver (1500 ms at most) before any stream exists
+        Float64 rateBefore = 0;
+        getProp (dev, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, rateBefore);
         coreaudio::setNominalRateAndWait (c.deviceName, c.sampleRate, 1500);
         Float64 rate = 0;
         getProp (dev, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, rate);
@@ -235,8 +248,8 @@ private:
         validBits = floatSamples ? 24 : (int) fmt.mBitsPerChannel;
         alignedHigh = (fmt.mFormatFlags & kAudioFormatFlagIsAlignedHigh) != 0;
         if (bytesPerChannel < 2 || bytesPerChannel > 4) { audioLog ("CoreAudio : taille de mot inattendue " + juce::String (bytesPerChannel)); abandonForFallback(); return Result::SoftFail; }
-        audioLog ("CoreAudio : format entier " + juce::String (validBits) + " bits, " + juce::String (bytesPerChannel) + " octets par voie, "
-                  + (alignedHigh ? "aligne haut" : "aligne bas") + ", " + juce::String ((int) fmt.mChannelsPerFrame) + " voies");
+        audioLog ("CoreAudio : ecriture " + (floatSamples ? juce::String ("Float32 (24 bits exacts)") : "entier " + juce::String (validBits) + " bits")
+                  + ", " + juce::String (bytesPerChannel) + " octets par voie, " + juce::String ((int) fmt.mChannelsPerFrame) + " voies");
 
         // 5. no mixing between us and the driver (settable while hogged)
         {
@@ -288,6 +301,13 @@ private:
         status.detail = "Hog Mode · "_t + (floatSamples ? juce::String ("Float32, 24 bits exacts (IOProc)")
                                                        : juce::String (validBits) + " bits entiers (IOProc)");
         if (c.wire == WireFormat::DoP) status.detail = "DoP · "_t + status.detail;
+        // DoP right after a rate change, or after a PCM stream on this device: the VAD must finish its rate switch
+        // before it can detect DoP and reconfigure itself in DSD; doing both at once stalls it (journal 13:16:35).
+        // start() then sends plain PCM silence until the clock runs steadily, before the engine's DoP pre-roll.
+        const bool rateChanged = std::abs ((double) rateBefore - c.sampleRate) > 0.5;
+        pcmLead = c.wire == WireFormat::DoP && (rateChanged || hadPcmStream);
+        if (pcmLead) audioLog (juce::String ("CoreAudio : amorce PCM prevue avant le DoP (") + (rateChanged ? "changement de frequence" : "flux PCM precedent") + ")");
+        hadPcmStream = c.wire != WireFormat::DoP;
         return Result::Ok;
     }
 
@@ -457,6 +477,7 @@ private:
             coreaudio::setHogMode (config.deviceName, false, e);
         }
         hogged = false;
+        hadPcmStream = false;
         dev = kAudioObjectUnknown;
     }
 
@@ -470,6 +491,7 @@ private:
 
     void render (AudioBufferList* out) noexcept
     {
+        ioCount.fetch_add (1, std::memory_order_relaxed);
         if (out == nullptr || out->mNumberBuffers == 0) return;
         auto* cb = callback.load();
         if (cb == nullptr)
@@ -579,7 +601,9 @@ private:
     int bytesPerChannel = 4, validBits = 32;
     bool alignedHigh = true;
     bool floatSamples = false;               // MT VAD: Float32 virtual format, written by us (exact for 24 bits)
-    std::atomic<bool> pcmTail { false };     // end of a DoP session: PCM zeros so the VAD leaves DSD mode
+    std::atomic<bool> pcmTail { false };     // PCM zeros on every channel: end of a DoP session, or lead-in before DoP
+    std::atomic<juce::uint64> ioCount { 0 }; // IOProc calls (real-time thread), to see the clock run
+    bool pcmLead = false, hadPcmStream = false;
 
     // state found at the first open, put back at close
     bool saved = false, savedMixingValid = false, formatsTouched = false, mixingTouched = false;
