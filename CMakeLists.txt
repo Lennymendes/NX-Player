@@ -104,7 +104,7 @@ file(GLOB_RECURSE NX_SOURCES CONFIGURE_DEPENDS
 list(FILTER NX_SOURCES EXCLUDE REGEX ".*/win/.*")
 list(FILTER NX_SOURCES EXCLUDE REGEX ".*_mac\\.(cpp|mm)$")
 if(APPLE)
-    list(APPEND NX_SOURCES Source/Output/CoreAudioExclusive_mac.cpp Source/Platform/MediaControls_mac.mm)
+    list(APPEND NX_SOURCES Source/Output/CoreAudioExclusive_mac.cpp Source/Output/CoreAudioBackend_mac.cpp Source/Platform/MediaControls_mac.mm)
     set_source_files_properties(Source/Platform/MediaControls_mac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 endif()
 if(WIN32)

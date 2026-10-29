@@ -119,7 +119,7 @@ bool JuceDeviceBackend::open (const OutputConfig& c, juce::String& error)
             device.reset();
             return false;
         }
-        if (hogged) coreaudio::setNominalRateAndWait (c.deviceName, c.sampleRate, 1500, c.wire == WireFormat::DoP);
+        if (hogged) coreaudio::setNominalRateAndWait (c.deviceName, c.sampleRate, 1500);
     }
    #endif
 
@@ -286,7 +286,7 @@ std::vector<std::unique_ptr<OutputBackend>> JuceDeviceBackend::createAll()
     std::vector<std::unique_ptr<OutputBackend>> list;
    #if JUCE_MAC
     if (auto* t = juce::AudioIODeviceType::createAudioIODeviceType_CoreAudio())
-        list.push_back (std::make_unique<JuceDeviceBackend> (std::unique_ptr<juce::AudioIODeviceType> (t)));
+        list.push_back (createNativeCoreAudioBackend (std::unique_ptr<juce::AudioIODeviceType> (t)));
    #endif
    #if JUCE_LINUX && JUCE_ALSA
     if (auto* t = juce::AudioIODeviceType::createAudioIODeviceType_ALSA())

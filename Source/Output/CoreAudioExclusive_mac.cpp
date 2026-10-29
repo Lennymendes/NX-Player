@@ -158,7 +158,7 @@ int setIntegerPhysicalFormat (const juce::String& deviceName, double sampleRate,
     return chosenBits;
 }
 
-bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs, bool forceTransition)
+bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs)
 {
     const auto dev = findDevice (deviceName);
     if (dev == kAudioObjectUnknown) return false;
@@ -168,31 +168,18 @@ bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, i
         Float64 r = 0; UInt32 sz = sizeof (r);
         return AudioObjectGetPropertyData (dev, &addr, 0, nullptr, &sz, &r) == noErr ? (double) r : 0.0;
     };
-    auto setAndWait = [&] (double rate)
+    if (std::abs (current() - sampleRate) < 0.5) return true;     // already there: no wait
+    Float64 wanted = sampleRate;
+    if (AudioObjectSetPropertyData (dev, &addr, 0, nullptr, sizeof (wanted), &wanted) != noErr) return false;
+    for (int waited = 0; waited < timeoutMs; waited += 20)
     {
-        if (std::abs (current() - rate) < 0.5) return true;
-        Float64 wanted = rate;
-        if (AudioObjectSetPropertyData (dev, &addr, 0, nullptr, sizeof (wanted), &wanted) != noErr) return false;
-        for (int waited = 0; waited < timeoutMs; waited += 20)
-        {
-            juce::Thread::sleep (20);
-            if (std::abs (current() - rate) < 0.5) return true;
-        }
-        return false;
-    };
-
-    if (std::abs (current() - sampleRate) < 0.5)
-    {
-        if (! forceTransition) return true;     // already there: no wait
-        // Warm restart: bounce through another supported rate so the driver and the DAC renegotiate the stream.
-        double bounce = 0.0;
-        const auto rates = getNominalSampleRates (deviceName);
-        for (double r : { 44100.0, 48000.0, 88200.0, 96000.0 })
-            if (std::abs (r - sampleRate) > 0.5 && rates.contains (r)) { bounce = r; break; }
-        if (bounce > 0.0) setAndWait (bounce);   // best effort: if it fails we still set the target below
+        juce::Thread::sleep (20);
+        if (std::abs (current() - sampleRate) < 0.5) return true;
     }
-    return setAndWait (sampleRate);              // false after timeoutMs: the check after open() decides
+    return false;   // the check after open() decides
 }
+
+unsigned int findDeviceId (const juce::String& deviceName) { return (unsigned int) findDevice (deviceName); }
 
 juce::Array<double> getNominalSampleRates (const juce::String& deviceName)
 {

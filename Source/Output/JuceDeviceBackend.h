@@ -65,14 +65,17 @@ namespace coreaudio
     bool setHogMode (const juce::String& deviceName, bool take, juce::String& error, int* ownerPid = nullptr, juce::String* ownerName = nullptr);
     /** Writes kAudioDevicePropertyNominalSampleRate and polls every 20 ms until the driver confirms it (or timeoutMs).
         No wait if the device already runs at that rate. Returns true when the rate is confirmed. */
-    bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs, bool forceTransition = false);
-    /** forceTransition: when the device already runs at that rate (warm restart: the driver / Anubis kept the previous
-        session's state and would not renegotiate), go through another rate first, confirmed, then back to the target. */
+    bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs);
     /** Picks the deepest integer physical format at that rate and disables mixing. Returns its bit depth (0 = unchanged). */
     int setIntegerPhysicalFormat (const juce::String& deviceName, double sampleRate, int preferredBits, juce::String& error);
     juce::Array<double> getNominalSampleRates (const juce::String& deviceName);
+    unsigned int findDeviceId (const juce::String& deviceName);   // AudioObjectID, 0 = unknown
     int getMaxPhysicalBits (const juce::String& deviceName);
 }
+
+/** macOS output: own IOProc on an integer stream format (no float conversion), Hog Mode, device state restored at
+    close. Falls back to the JUCE path when the device offers no usable integer format. */
+std::unique_ptr<OutputBackend> createNativeCoreAudioBackend (std::unique_ptr<juce::AudioIODeviceType> coreAudioType);
 #endif
 
 } // namespace nx
