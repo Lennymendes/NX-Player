@@ -73,8 +73,8 @@ namespace coreaudio
     int getMaxPhysicalBits (const juce::String& deviceName);
 }
 
-/** macOS output: own IOProc on an integer stream format (no float conversion), Hog Mode, device state restored at
-    close. Falls back to the JUCE path when the device offers no usable integer format. */
+/** macOS output: own IOProc (integer stream format, or the driver's Float32 written exactly), Hog Mode, formats
+    put back at close. Falls back to the JUCE path when neither is usable. */
 std::unique_ptr<OutputBackend> createNativeCoreAudioBackend (std::unique_ptr<juce::AudioIODeviceType> coreAudioType);
 #endif
 

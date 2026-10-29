@@ -2,13 +2,14 @@
 // Native CoreAudio output for macOS (Merging Anubis / RAVENNA VAD, RME, any DAC).
 //
 //  - Hog Mode taken before anything else (5 tries, 50 ms apart); DoP never falls back to shared mode.
-//  - the stream is switched to an INTEGER format (physical AND virtual), mixing is disabled: our own IOProc
-//    writes the engine's integers straight into the driver's buffers. No float conversion, no JUCE in between,
-//    so the 24 bits of a DoP word (marker + 16 DSD bits) reach the device untouched.
-//  - the device state found at the first open (nominal rate, stream formats, mixing flag) is saved and put back
-//    at close(), so a quick restart never meets what the previous session left behind.
-//  - DoP: the carrier keeps running 100 ms before the IOProc is stopped (clean end of the stream).
-//  - when no usable integer format exists the JUCE path is used instead (same behaviour as before).
+//  - our own IOProc writes the engine's samples straight into the driver's buffers, no JUCE in between:
+//    an integer stream format when the device offers one (physical AND virtual, read back), otherwise the
+//    driver's own Float32 format (MT VAD exposes only Float32) with k / 2^31 values, exact for the 24 bits
+//    of a DoP word. Mixing is disabled.
+//  - DoP: every channel of the stream carries DoP (unused channels get DoP silence with the same marker), the
+//    carrier runs 100 ms before a reconfiguration, and a session ends with 300 ms of PCM silence so the VAD
+//    ("Follow DoP detection") goes back to PCM before the device is released.
+//  - the nominal rate is never restored; only the stream formats and the mixing flag we changed are.
 #include "JuceDeviceBackend.h"
 #include "../Core/AudioLog.h"
 
@@ -134,7 +135,7 @@ public:
         if (useJuce) { juceBackend->stop(); return; }
         if (! running) { callback.store (nullptr); return; }
         // DoP: let the carrier run a moment longer so the DAC sees a clean end of stream, not a cut.
-        if (config.wire == WireFormat::DoP) juce::Thread::sleep (100);
+        if (config.wire == WireFormat::DoP && ! pcmTail.load()) juce::Thread::sleep (100);
         AudioDeviceStop (dev, procId);
         running = false;
         callback.store (nullptr);
@@ -143,7 +144,18 @@ public:
     void close() override
     {
         if (useJuce) { juceBackend->close(); useJuce = false; }
+        if (procId != nullptr && dev != kAudioObjectUnknown && config.wire == WireFormat::DoP)
+        {
+            // End of session: plain PCM silence on every channel for 300 ms, so the VAD ("Follow DoP detection")
+            // sees the DoP stream end and goes back to PCM, as after a cold start, before we let go of the device.
+            // The engine usually stops the stream before closing: restart it just for this tail.
+            audioLog ("CoreAudio : fin de session DoP, 300 ms de silence PCM pour que le VAD repasse en PCM");
+            pcmTail.store (true);
+            if (! running) running = AudioDeviceStart (dev, procId) == noErr;
+            juce::Thread::sleep (300);
+        }
         closeNative();
+        pcmTail.store (false);
         status.open = false;
     }
 
@@ -207,9 +219,20 @@ private:
         audioLog ("CoreAudio : frequence nominale confirmee " + formatRate ((double) rate));
         // 4. integer stream format, physical and virtual, read back
         AudioStreamBasicDescription fmt {};
-        if (! applyIntegerFormat (c, fmt)) { audioLog ("CoreAudio : aucun format entier exploitable, repli sur JUCE (rien n'est restaure, le Hog Mode est conserve)"); abandonForFallback(); return Result::SoftFail; }
+        floatSamples = false;
+        if (! applyIntegerFormat (c, fmt))
+        {
+            // MT VAD only exposes Float32 (8 channels, interleaved): write floats ourselves, exact for 24 bits.
+            if (! useFloatFormat (fmt))
+            {
+                audioLog ("CoreAudio : ni entier ni Float32 exploitable, repli sur JUCE (rien n'est restaure, le Hog Mode est conserve)");
+                abandonForFallback();
+                return Result::SoftFail;
+            }
+            floatSamples = true;
+        }
         bytesPerChannel = bytesPerChannelOf (fmt);
-        validBits = (int) fmt.mBitsPerChannel;
+        validBits = floatSamples ? 24 : (int) fmt.mBitsPerChannel;
         alignedHigh = (fmt.mFormatFlags & kAudioFormatFlagIsAlignedHigh) != 0;
         if (bytesPerChannel < 2 || bytesPerChannel > 4) { audioLog ("CoreAudio : taille de mot inattendue " + juce::String (bytesPerChannel)); abandonForFallback(); return Result::SoftFail; }
         audioLog ("CoreAudio : format entier " + juce::String (validBits) + " bits, " + juce::String (bytesPerChannel) + " octets par voie, "
@@ -255,14 +278,15 @@ private:
         status.backendName = getTypeName();
         status.deviceName = c.deviceName;
         status.sampleRate = (double) rate;
-        status.deviceBits = validBits;
-        status.exactBits = juce::jmin (validBits, 32);
+        status.deviceBits = floatSamples ? 0 : validBits;
+        status.exactBits = floatSamples ? 24 : juce::jmin (validBits, 32);
         status.exclusive = true;
         status.osMixerBypassed = true;
         status.wire = c.wire;
         status.bufferFrames = (int) frames;
         status.outputLatencySeconds = (double) (latency + safety + frames) / juce::jmax (1.0, (double) rate);
-        status.detail = "Hog Mode · "_t + juce::String (validBits) + " bits entiers (IOProc)";
+        status.detail = "Hog Mode · "_t + (floatSamples ? juce::String ("Float32, 24 bits exacts (IOProc)")
+                                                       : juce::String (validBits) + " bits entiers (IOProc)");
         if (c.wire == WireFormat::DoP) status.detail = "DoP · "_t + status.detail;
         return Result::Ok;
     }
@@ -325,6 +349,38 @@ private:
             { audioLog (label + "refus : flux de dispositions differentes"); return false; }
         }
         if (first) audioLog ("CoreAudio : aucun flux de sortie");
+        return ! first;
+    }
+
+    static bool isFloat32 (const AudioStreamBasicDescription& d)
+    {
+        return d.mFormatID == kAudioFormatLinearPCM && (d.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+            && (d.mFormatFlags & kAudioFormatFlagIsBigEndian) == 0 && d.mBitsPerChannel == 32;
+    }
+
+    /** Keeps the driver's own Float32 virtual format (only its rate is aligned if needed): no conversion in the HAL. */
+    bool useFloatFormat (AudioStreamBasicDescription& out)
+    {
+        bool first = true;
+        int streamIndex = 0;
+        for (auto& s : saved_streams)
+        {
+            const auto label = "CoreAudio : flux " + juce::String (streamIndex++) + " ";
+            AudioStreamBasicDescription got {};
+            if (! getProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, got)) { audioLog (label + "refus : lecture du format virtuel"); return false; }
+            if (std::abs (got.mSampleRate - config.sampleRate) > 0.5 && isFloat32 (got))
+            {
+                AudioStreamBasicDescription want = got;
+                want.mSampleRate = config.sampleRate;
+                formatsTouched = true;
+                setProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, want);
+                getProp (s.id, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, got);
+            }
+            audioLog (label + "format virtuel retenu : " + describe (got));
+            if (! isFloat32 (got) || std::abs (got.mSampleRate - config.sampleRate) > 0.5) { audioLog (label + "refus : pas en Float32 a la bonne frequence"); return false; }
+            if (first) { out = got; first = false; }
+            else if (bytesPerChannelOf (got) != bytesPerChannelOf (out)) { audioLog (label + "refus : flux de dispositions differentes"); return false; }
+        }
         return ! first;
     }
 
@@ -423,8 +479,16 @@ private:
             return;
         }
 
+        if (pcmTail.load())
+        {
+            for (UInt32 b = 0; b < out->mNumberBuffers; ++b)
+                if (out->mBuffers[b].mData != nullptr) std::memset (out->mBuffers[b].mData, 0, out->mBuffers[b].mDataByteSize);
+            return;
+        }
+
         int totalChannels = 0;
         for (UInt32 b = 0; b < out->mNumberBuffers; ++b) totalChannels += (int) out->mBuffers[b].mNumberChannels;
+        const bool dop = config.wire == WireFormat::DoP;
         const auto& b0 = out->mBuffers[0];
         if (b0.mNumberChannels == 0 || b0.mData == nullptr) return;
         const int frames = (int) (b0.mDataByteSize / (b0.mNumberChannels * (UInt32) bytesPerChannel));
@@ -448,7 +512,11 @@ private:
                 for (int k = 0; k < nch; ++k)
                 {
                     const int c = globalChannel + k;
-                    store (base + (size_t) done * stride + (size_t) k * (size_t) bytesPerChannel, stride, c < ch ? ptrs[c] : nullptr, n);
+                    // Channels the engine does not feed: DoP silence with the same marker in DoP (so the VAD sees one
+                    // consistent DoP stream on all its channels), plain zero in PCM.
+                    auto* dst = base + (size_t) done * stride + (size_t) k * (size_t) bytesPerChannel;
+                    if (c < ch) store (dst, stride, ptrs[c], n, false);
+                    else store (dst, stride, dop && ch > 0 ? ptrs[0] : nullptr, n, dop && ch > 0);
                 }
                 globalChannel += nch;
             }
@@ -456,12 +524,20 @@ private:
         }
     }
 
-    /** Writes n engine samples (left-justified int32) into the driver's integer layout; null source = silence. */
-    void store (uint8_t* dst, size_t stride, const int32_t* src, int n) const noexcept
+    /** Writes n engine samples (left-justified int32) into the driver's layout (integer or Float32); null source = silence. */
+    void store (uint8_t* dst, size_t stride, const int32_t* src, int n, bool dopIdleFromMarker) const noexcept
     {
         for (int i = 0; i < n; ++i, dst += stride)
         {
-            const int32_t v = src != nullptr ? src[i] : 0;
+            int32_t v = src != nullptr ? src[i] : 0;
+            if (dopIdleFromMarker) v = (int32_t) (((uint32_t) v & 0xFF000000u) | 0x00696900u);   // marker + 0x69 0x69
+            if (floatSamples)
+            {
+                // k / 2^31 is exact in a float for 24 significant bits (a DoP word): the driver gets the same integer back
+                const float f = (float) ((double) v * (1.0 / 2147483648.0));
+                std::memcpy (dst, &f, 4);
+                continue;
+            }
             switch (bytesPerChannel)
             {
                 case 4:
@@ -502,6 +578,8 @@ private:
     juce::HeapBlock<int32_t> scratch;
     int bytesPerChannel = 4, validBits = 32;
     bool alignedHigh = true;
+    bool floatSamples = false;               // MT VAD: Float32 virtual format, written by us (exact for 24 bits)
+    std::atomic<bool> pcmTail { false };     // end of a DoP session: PCM zeros so the VAD leaves DSD mode
 
     // state found at the first open, put back at close
     bool saved = false, savedMixingValid = false, formatsTouched = false, mixingTouched = false;

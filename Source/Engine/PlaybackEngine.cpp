@@ -1137,7 +1137,7 @@ void PlaybackEngine::watchDeviceStart()
     const auto now = juce::Time::getMillisecondCounter();
     const auto elapsed = now - startedAtMs;
     const auto cbs = stats.callbacks.load() - callbacksAtStart;
-    static constexpr juce::uint32 stages[] = { 500, 1000, 2500, 5000 };
+    static constexpr juce::uint32 stages[] = { 500, 1000, 2500, 5000 };   // last one after the 4 s check
     while (watchStage < 4 && elapsed >= stages[watchStage])
     {
         audioLog ("Moteur : +" + juce::String ((int) stages[watchStage]) + " ms, callbacks " + juce::String ((juce::int64) cbs)
@@ -1152,16 +1152,17 @@ void PlaybackEngine::watchDeviceStart()
         watchConfirmed = true;
         audioLog ("Moteur : flux confirme, " + juce::String ((juce::int64) cbs) + " callbacks en " + juce::String ((int) elapsed) + " ms");
     }
-    if (! watchConfirmed && elapsed >= 1500)
+    // 4 s, once: when the VAD sees DoP it reconfigures itself in DSD and may pause the stream meanwhile.
+    if (! watchConfirmed && elapsed >= 4000)
     {
-        if (watchRetries >= 2)
+        if (watchRetries >= 1)
         {
-            audioLog ("Moteur : aucun callback apres 2 redemarrages du flux, abandon");
+            audioLog ("Moteur : aucun callback apres un redemarrage du flux, abandon");
             abortDeviceStart ("Sortie audio : le DAC ne cadence pas le flux (aucun buffer reçu). Journal : "_t + audioLogFile().getFullPathName());
             return;
         }
         ++watchRetries;
-        audioLog ("Moteur : " + juce::String ((juce::int64) cbs) + " callbacks en 1,5 s, redemarrage du flux (essai " + juce::String (watchRetries) + ")");
+        audioLog ("Moteur : " + juce::String ((juce::int64) cbs) + " callbacks en 4 s, redemarrage du flux (essai " + juce::String (watchRetries) + ")");
         backend->stop();
         stableCallbacks = 0; lastCallbackFrames = 0;       // the device is stopped: audio-thread state can be set directly
         deviceRunning = backend->start (this);
