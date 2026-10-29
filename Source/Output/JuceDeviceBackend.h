@@ -65,7 +65,9 @@ namespace coreaudio
     bool setHogMode (const juce::String& deviceName, bool take, juce::String& error, int* ownerPid = nullptr, juce::String* ownerName = nullptr);
     /** Writes kAudioDevicePropertyNominalSampleRate and polls every 20 ms until the driver confirms it (or timeoutMs).
         No wait if the device already runs at that rate. Returns true when the rate is confirmed. */
-    bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs);
+    bool setNominalRateAndWait (const juce::String& deviceName, double sampleRate, int timeoutMs, bool forceTransition = false);
+    /** forceTransition: when the device already runs at that rate (warm restart: the driver / Anubis kept the previous
+        session's state and would not renegotiate), go through another rate first, confirmed, then back to the target. */
     /** Picks the deepest integer physical format at that rate and disables mixing. Returns its bit depth (0 = unchanged). */
     int setIntegerPhysicalFormat (const juce::String& deviceName, double sampleRate, int preferredBits, juce::String& error);
     juce::Array<double> getNominalSampleRates (const juce::String& deviceName);

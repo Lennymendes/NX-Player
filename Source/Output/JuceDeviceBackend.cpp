@@ -119,7 +119,7 @@ bool JuceDeviceBackend::open (const OutputConfig& c, juce::String& error)
             device.reset();
             return false;
         }
-        if (hogged) coreaudio::setNominalRateAndWait (c.deviceName, c.sampleRate, 1500);
+        if (hogged) coreaudio::setNominalRateAndWait (c.deviceName, c.sampleRate, 1500, c.wire == WireFormat::DoP);
     }
    #endif
 
