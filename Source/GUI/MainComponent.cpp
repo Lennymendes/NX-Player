@@ -332,9 +332,34 @@ void MainComponent::setSidebarVisible (bool visible, bool animate)
     else { sidebarAmount = visible ? 1.0f : 0.0f; sidebar.setVisible (visible); resized(); }
 }
 
-void MainComponent::navigate (const PageRequest& r)
+bool MainComponent::isLocalPage (PageId p) noexcept
 {
+    return p == PageId::Library || p == PageId::Albums || p == PageId::Artists || p == PageId::Songs || p == PageId::RecentlyAdded
+        || p == PageId::Genre || p == PageId::AlbumDetail || p == PageId::ArtistDetail;
+}
+
+void MainComponent::rememberLocalView()
+{
+    if (visiblePage == &listing && isLocalPage (current.page)) { localView = current; localScroll = listing.getScrollY(); }
+}
+
+void MainComponent::navigate (const PageRequest& request)
+{
+    auto r = request;
     if (r.page == PageId::Settings) { openSettings (r.a); return; }   // a window over the page, not a page
+    if (r.page == PageId::Library && r.b == "sidebar")
+    {
+        // "Local" in the sidebar: back to the album / artist that was open (same scroll), not to the grid.
+        // Only the Back button leaves it.
+        r.b = {};
+        rememberLocalView();
+        if (localView.page == PageId::AlbumDetail || localView.page == PageId::ArtistDetail
+            || (localView.page == PageId::Genre && localView.a.isNotEmpty()))
+        {
+            r = localView;
+            pendingScroll = localScroll;
+        }
+    }
     if (settingsWindow.isVisible()) settingsWindow.close();
     // History: drop the "forward" part, collapse consecutive searches (typing) into one entry.
     if (historyPos >= 0 && history[(size_t) historyPos] == r) { open (r); return; }
@@ -366,6 +391,10 @@ void MainComponent::updateNavButtons()
 
 void MainComponent::open (const PageRequest& r)
 {
+    rememberLocalView();                       // scroll position of the page being left
+    const int scroll = pendingScroll;
+    pendingScroll = -1;
+    if (isLocalPage (r.page)) { localView = r; localScroll = 0; }
     current = r;
     updateNavButtons();
     sidebar.setActive (r);
@@ -386,6 +415,7 @@ void MainComponent::open (const PageRequest& r)
     listing.heroArtwork = {};
     listing.heroArtist = {};
     listing.heroTracks.clear();
+    listing.collection = {};
     listing.topSlot = nullptr;
     listing.ctaText = {};
     listing.ctaAction = nullptr;
@@ -419,6 +449,7 @@ void MainComponent::open (const PageRequest& r)
                 p.grid.setAlbums (lib.getAlbums ("added", 48));
                 p.list.setTracks (lib.getRecentlyAdded (12));
                 p.heroTracks = p.list.getTracks();
+                if (n > 0) p.collection = "local";            // Lire / Aléatoire: the whole library, not the 12 recent tracks
             };
             break;
         case PageId::Library:
@@ -513,6 +544,7 @@ void MainComponent::open (const PageRequest& r)
                     p.grid.setAlbums (albums);
                     p.heroTracks = lib.getTracksFiltered (q);
                 }
+                if (p.heroTracks.empty() && lib.countTracks() > 0) p.collection = "local";   // views without a track list: play the library
             };
             break;
         }
@@ -546,6 +578,7 @@ void MainComponent::open (const PageRequest& r)
                 p.grid.setAlbums (albums);
                 p.list.setTracks (tracks);
                 p.heroTracks = tracks;
+                if (! tracks.empty()) p.collection = "favourites";
                 p.list.onChanged = [this] { refreshCurrentPage(); };
             };
             break;
@@ -641,6 +674,7 @@ void MainComponent::open (const PageRequest& r)
     listing.scrollToTop();
     showPage (&listing);
     listing.scrollToTop();
+    if (scroll > 0) listing.setScrollY (scroll);
 }
 
 void MainComponent::refreshCurrentPage()

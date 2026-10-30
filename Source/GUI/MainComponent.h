@@ -87,6 +87,8 @@ public:
 
 private:
     void open (const PageRequest& r);
+    static bool isLocalPage (PageId p) noexcept;
+    void rememberLocalView();
     void updateNavButtons();
     void showPage (juce::Component* page);
     void timerCallback() override;
@@ -112,6 +114,8 @@ private:
     juce::TooltipWindow tooltips { this, 650 };
     juce::Component* visiblePage = nullptr;
     PageRequest current;
+    PageRequest localView;            // last page of the Local family (album, artist, grid...) and its scroll
+    int localScroll = 0, pendingScroll = -1;
     bool queueVisible = false;
     bool immersiveMadeFullScreen = false;
 };

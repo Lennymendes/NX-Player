@@ -1,5 +1,7 @@
 // NX Player — MIT License
 #include "Pages.h"
+#include <random>
+#include <algorithm>
 #include "../Engine/DeviceProfiles.h"
 #include "../Library/Downloads.h"
 #include "../Providers/StreamingProviders.h"
@@ -40,12 +42,17 @@ ListingPage::ListingPage (AppContext& c) : ScrollPage (c), grid (c), list (c), p
     cta.setToggleState (true, juce::dontSendNotification);
     cta.onClick = [this] { if (ctaAction) ctaAction(); };
     playAll.setToggleState (true, juce::dontSendNotification);
-    playAll.onClick = [this] { if (! heroTracks.empty()) ctx.playTracks (heroTracks, 0); };
+    playAll.onClick = [this]
+    {
+        if (collection.isNotEmpty()) ctx.playCollection (collection, false);
+        else if (! heroTracks.empty()) ctx.playTracks (heroTracks, 0);
+    };
     shuffleAll.onClick = [this]
     {
+        if (collection.isNotEmpty()) { ctx.playCollection (collection, true); return; }
         auto t = heroTracks;
-        juce::Random r;
-        for (size_t i = t.size(); i > 1; --i) std::swap (t[i - 1], t[(size_t) r.nextInt ((int) i)]);
+        std::mt19937 rng { std::random_device{}() };
+        std::shuffle (t.begin(), t.end(), rng);
         if (! t.empty()) ctx.playTracks (t, 0);
     };
     grid.onOpen = [this] (const AlbumInfo& a) { ctx.navigate ({ PageId::AlbumDetail, a.artist, a.title }); };
@@ -93,8 +100,8 @@ void ListingPage::layoutContent (int width)
     int y = 24;
 
     heroArt.setVisible (hero);
-    playAll.setVisible (hero || ! heroTracks.empty());
-    shuffleAll.setVisible (hero || ! heroTracks.empty());
+    playAll.setVisible (hasPlayRow());
+    shuffleAll.setVisible (hasPlayRow());
     bool remote = false;
     for (auto& t : heroTracks) remote = remote || DownloadManager::canDownload (t);
     downloadAll.setVisible (remote && playAll.isVisible());
@@ -105,7 +112,7 @@ void ListingPage::layoutContent (int width)
         const int h = artistHeader.heightForWidth (inner);
         artistHeader.setBounds (pad, y, inner, h);
         y += h + 12;
-        if (! heroTracks.empty())
+        if (hasPlayRow())
         {
             playAll.setBounds (pad, y, 120, 36);
             shuffleAll.setBounds (pad + 132, y, 130, 36);
@@ -134,7 +141,7 @@ void ListingPage::layoutContent (int width)
             pills.setBounds (pad, y, inner, 38);
             y += 50;
         }
-        if (! heroTracks.empty())
+        if (hasPlayRow())
         {
             playAll.setBounds (pad, y, 120, 36);
             shuffleAll.setBounds (pad + 132, y, 130, 36);
@@ -1300,7 +1307,8 @@ void SettingsPage::buildInterface()
     {
         juce::StringArray names, ids;
         for (auto& th : ctx.themes().getThemes()) { names.add (th.name); ids.add (th.id); }
-        row ("Thème"_t, makeCombo (names, ctx.theme().name, [this, names, ids] (const juce::String& v)
+        const auto* chosen = ctx.themes().findTheme (ctx.selectedThemeId());
+        row ("Thème"_t, makeCombo (names, chosen != nullptr ? chosen->name : ctx.theme().name, [this, names, ids] (const juce::String& v)
         {
             const int i = names.indexOf (v);
             if (i >= 0) ctx.applyTheme (ids[i]);

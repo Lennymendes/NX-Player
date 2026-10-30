@@ -26,6 +26,8 @@ public:
     juce::String heroArtist;            // album detail: artist (blue, clickable)
     bool hero = false;
     std::vector<TrackInfo> heroTracks;  // what "Lire" / "Aléatoire" play
+    juce::String collection;            // "local" | "favourites": Lire / Aléatoire play the whole collection (endless shuffle)
+    bool hasPlayRow() const { return hero || ! heroTracks.empty() || collection.isNotEmpty(); }
     AlbumGrid grid;
     TrackList list;
     PluginSlot* topSlot = nullptr;

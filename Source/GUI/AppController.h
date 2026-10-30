@@ -3,6 +3,8 @@
 #pragma once
 
 #include "AppContext.h"
+#include <random>
+#include <algorithm>
 #include "LookAndFeel.h"
 #include "Artwork.h"
 #include "../Library/Library.h"
@@ -60,6 +62,7 @@ public:
 
     void playTracks (const std::vector<TrackInfo>& tracks, int startIndex) override;
     void enqueue (const std::vector<TrackInfo>& tracks) override;
+    void playCollection (const juce::String& scope, bool shuffle) override;
     const TrackInfo* currentTrack() override;
     void navigate (const PageRequest& r) override;
     void toggleMiniPlayer() override;
@@ -73,6 +76,11 @@ public:
     void selectBackend (const juce::String& name) override;
     void selectDevice (const juce::String& name) override;
     void applyTheme (const juce::String& id) override;
+    juce::String selectedThemeId() override { return appSettings.get ("theme", themeManager.current().id).toString(); }
+    /** Immediate re-skin (tests only: the UI never calls it). */
+    void applyThemeNow (const juce::String& id);
+    /** Relaunches the application once this process has quit. */
+    void restartApplication();
     void showMessage (const juce::String& text) override;
     juce::File userDataDirectory() override  { return dataDir; }
     juce::File resourcesDirectory() override { return resourcesDir; }
@@ -111,6 +119,8 @@ private:
     void loadEngineSettings();
     void rebuildDspChain();
     void applyLayoutSettings();
+    std::vector<TrackInfo> collectionTracks (const juce::String& scope);
+    void extendShuffle();
 
     juce::File dataDir, resourcesDir;
     AppSettings appSettings;
@@ -141,6 +151,13 @@ private:
     TrackInfo externalTrack;                        // Spotify / YouTube hand-off
     bool externalPlaying = false;
     bool shuffleOn = false, repeatOn = false;
+    bool restartPromptOpen = false;
+    // Endless shuffle: shuffled passes over the whole collection, queued a chunk at a time.
+    juce::String shuffleScope;                      // empty = no endless shuffle running
+    std::vector<TrackInfo> shufflePass;             // current pass, already shuffled
+    size_t shuffleNext = 0;                         // next track of the pass to queue
+    juce::int64 lastQueuedKey = 0;
+    std::mt19937 rng { std::random_device{}() };
     juce::String backendName;
     double lastFrame = 0.0;
     int lyricsGeneration = 0;

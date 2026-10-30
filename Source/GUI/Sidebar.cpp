@@ -48,7 +48,7 @@ void Sidebar::refresh()
     item ("Accueil"_t, style::Icon::Home, { PageId::Home });
     item ("En cours"_t, style::Icon::Expand, { PageId::NowPlaying });
     header ("Bibliothèque"_t);
-    item ("Local"_t, style::Icon::Folder, { PageId::Library, "albums" }, {}, true);
+    item ("Local"_t, style::Icon::Folder, { PageId::Library, "albums", "sidebar" }, {}, true);
     item ("Favoris"_t, style::Icon::Heart, { PageId::Favourites });
     item ("Playlists"_t, style::Icon::Playlist, { PageId::Playlists });
     header ("Réseau"_t);

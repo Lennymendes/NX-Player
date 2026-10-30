@@ -341,10 +341,22 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
     t.check (app.currentTrack() != nullptr && app.currentTrack()->title.contains ("Night"), "lecture lancée depuis l'interface : "_t + (app.currentTrack() ? app.currentTrack()->title : juce::String()));
     t.check (shoot ("04_en_cours_paroles") > 60, "En cours : pochette, paroles synchronisées, chemin du signal"_t);
 
-    app.applyTheme ("aura-neon");
+    // Lire / Aléatoire = the whole library, not 12 tracks; the shuffle queue is topped up from the library
+    app.playCollection ("local", true);
+    settle (300);
+    t.check ((int) app.engine().getQueue().size() == juce::jmin (200, app.library().countTracks()),
+             "Aléatoire : toute la bibliothèque (pas 12 titres), file rechargée par passes"_t);
+    // Local (sidebar) returns to the album that was open instead of the grid
+    main->navigate ({ nx::PageId::AlbumDetail, "Zeyn", "Neon Roads" });
+    main->navigate ({ nx::PageId::Playlists });
+    main->navigate ({ nx::PageId::Library, "albums", "sidebar" });
+    t.check (main->getCurrentPage().page == nx::PageId::AlbumDetail, "menu Local : reste sur l'album ouvert"_t);
+    main->navigate ({ nx::PageId::Library, "albums" });
+
+    app.applyThemeNow ("aura-neon");
     app.navigate ({ nx::PageId::Albums });
     t.check (shoot ("05_theme_aura_neon") > 40 && app.theme().id == "aura-neon", "thème Aura Neon appliqué à chaud"_t);
-    app.applyTheme ("nx-emerald");
+    app.applyThemeNow ("nx-emerald");
 
     app.navigate ({ nx::PageId::Search, "lum" });
     t.check (shoot ("06_recherche") > 40, "Recherche unifiée"_t);
@@ -650,7 +662,7 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         folder.getChildFile ("theme.css").replaceWithText (":root { --nx-accent: #FF2A6D; --nx-immersive-layout: centered; --nx-immersive-vu: on; --nx-immersive-artwork-scale: 0.9; }");
         folder.getChildFile ("immersive.json").replaceWithText (R"({ "spectrum": true, "motion": 1.5 })");
         app.themes().rescan();
-        app.applyTheme ("immersive-test");
+        app.applyThemeNow ("immersive-test");
         auto c = nx::ImmersiveConfig::resolve (app);
         const bool fromTheme = c.layout == "centered" && c.vu && c.spectrum && std::abs (c.motion - 1.5f) < 0.01f && c.source.contains ("th");
         main->getImmersive().refreshConfig();
@@ -668,7 +680,7 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         t.check (fromTheme && fromSettings && fromPlugin, "disposition modulable : thème (CSS + immersive.json), puis réglages, puis plug-ins"_t);
         app.layout.getDynamicObject()->removeProperty ("immersive");
         app.settings().set ("immersive", juce::var (new juce::DynamicObject()));
-        app.applyTheme ("nx-emerald");
+        app.applyThemeNow ("nx-emerald");
     }
     app.setImmersive (false);
     t.check (! main->isImmersive(), "Échap / bouton : sortie de la vue immersive"_t);

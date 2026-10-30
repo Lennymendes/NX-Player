@@ -69,6 +69,8 @@ public:
     /** Plays a list (local, NAS, Qobuz / Tidal through the engine; Spotify / YouTube handed over). */
     virtual void playTracks (const std::vector<TrackInfo>& tracks, int startIndex) = 0;
     virtual void enqueue (const std::vector<TrackInfo>& tracks) = 0;
+    /** Plays a whole collection ("local" = the entire library, "favourites"); shuffle = endless random passes. */
+    virtual void playCollection (const juce::String& scope, bool shuffle) = 0;
     virtual const TrackInfo* currentTrack() = 0;
     virtual void navigate (const PageRequest& request) = 0;
     virtual void toggleMiniPlayer() = 0;
@@ -81,7 +83,10 @@ public:
     virtual juce::String getCurrentBackendName() = 0;
     virtual void selectBackend (const juce::String& name) = 0;
     virtual void selectDevice (const juce::String& name) = 0;
+    /** Saves the chosen theme and offers a restart (no hot re-skin: it would invalidate LookAndFeel pointers). */
     virtual void applyTheme (const juce::String& id) = 0;
+    /** The theme that will be active at the next launch (the running one until a restart). */
+    virtual juce::String selectedThemeId() { return theme().id; }
     virtual void showMessage (const juce::String& text) = 0;
     /** User data folder (settings, library, user themes and plug-ins) and bundled resources folder. */
     virtual juce::File userDataDirectory() = 0;

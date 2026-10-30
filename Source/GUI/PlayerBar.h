@@ -60,6 +60,7 @@ private:
     void syncLoop();
     QualityBadge badge;
     juce::Slider volume;
+    juce::Label volumeLock;              // "Volume Fixe / DoP" over the greyed slider
     PluginSlot pluginSlot;
     juce::Rectangle<int> textArea;
     juce::String title, subtitle, artistText, albumText;

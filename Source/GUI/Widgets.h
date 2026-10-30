@@ -227,6 +227,8 @@ public:
     void setContentHeight (int h);
     /** Always open a page at its top (after the content has been laid out). */
     void scrollToTop() { viewport.setViewPosition (0, 0); }
+    int getScrollY() const { return viewport.getViewPositionY(); }
+    void setScrollY (int y) { viewport.setViewPosition (0, y); }
     virtual void layoutContent (int width) = 0;
     virtual void refresh() {}
     void paint (juce::Graphics&) override {}

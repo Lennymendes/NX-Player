@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "AppController.h"
+#include <numeric>
 #include "Windows.h"
 #include "../Providers/UpnpProvider.h"
 #include "../Providers/StreamingProviders.h"
@@ -347,9 +348,45 @@ void AppController::saveNasServers()
     }
 }
 
-void AppController::applyTheme (const juce::String& id)
+void AppController::applyThemeNow (const juce::String& id)
 {
     if (themeManager.apply (id)) appSettings.set ("theme", id);
+}
+
+void AppController::applyTheme (const juce::String& id)
+{
+    if (themeManager.findTheme (id) == nullptr) return;
+    appSettings.set ("theme", id);                       // read at the next launch
+    if (id == themeManager.current().id || mainWindow == nullptr || restartPromptOpen) return;
+
+    restartPromptOpen = true;
+    std::weak_ptr<int> weak = alive;
+    const auto options = juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::QuestionIcon)
+                             .withTitle ("Thème modifié"_t)
+                             .withMessage ("Le nouveau thème sera appliqué au prochain démarrage de NX Player. Redémarrer maintenant ?"_t)
+                             .withButton ("Redémarrer maintenant"_t).withButton ("Plus tard"_t);
+    juce::AlertWindow::showAsync (options, [this, weak] (int result)
+    {
+        if (weak.expired()) return;
+        restartPromptOpen = false;
+        if (result == 1) restartApplication();           // first button
+    });
+}
+
+void AppController::restartApplication()
+{
+    const auto exe = juce::File::getSpecialLocation (juce::File::currentApplicationFile).getFullPathName();
+    // Single-instance app: a helper waits for this process to exit, then starts the new one.
+   #if JUCE_WINDOWS
+    const juce::StringArray cmd { "cmd", "/c", "ping", "-n", "3", "127.0.0.1", ">nul", "&", "start", "\"\"", exe };
+   #elif JUCE_MAC
+    const juce::StringArray cmd { "/bin/sh", "-c", "sleep 1; open -n \"$0\"", exe };
+   #else
+    const juce::StringArray cmd { "/bin/sh", "-c", "sleep 1; exec \"$0\"", exe };
+   #endif
+    static juce::ChildProcess helper;
+    if (helper.start (cmd)) juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    else showMessage ("Redémarrage automatique impossible : relancez NX Player manuellement."_t);
 }
 
 //==============================================================================
@@ -379,6 +416,7 @@ void AppController::playTracks (const std::vector<TrackInfo>& tracks, int startI
     }
 
     externalPlaying = false;
+    shuffleScope = {};                                   // a hand-picked list ends any endless shuffle
     queueTracks.clear();
     std::vector<PlayableItem> items;
     int start = 0;
@@ -392,15 +430,76 @@ void AppController::playTracks (const std::vector<TrackInfo>& tracks, int startI
     }
     if (shuffleOn && items.size() > 1)
     {
-        juce::Random r;
-        for (size_t i = items.size() - 1; i > (size_t) start + 1; --i)
+        // the chosen track stays first, the rest is shuffled
+        std::vector<size_t> order (items.size() - (size_t) start - 1);
+        std::iota (order.begin(), order.end(), (size_t) start + 1);
+        std::shuffle (order.begin(), order.end(), rng);
+        auto items2 = items;
+        auto tracks2 = queueTracks;
+        for (size_t k = 0; k < order.size(); ++k)
         {
-            const auto j = (size_t) start + 1 + (size_t) r.nextInt ((int) (i - (size_t) start));
-            std::swap (items[i], items[j]);
-            std::swap (queueTracks[i], queueTracks[j]);
+            items[(size_t) start + 1 + k] = items2[order[k]];
+            queueTracks[(size_t) start + 1 + k] = tracks2[order[k]];
         }
     }
     eng->setQueue (std::move (items), start, true);
+}
+
+std::vector<TrackInfo> AppController::collectionTracks (const juce::String& scope)
+{
+    return scope == "favourites" ? lib.getFavouriteTracks() : lib.getTracks ("artist", 1000000);
+}
+
+void AppController::playCollection (const juce::String& scope, bool shuffle)
+{
+    auto tracks = collectionTracks (scope);
+    if (tracks.empty()) { showMessage ("Aucun morceau à lire"_t); return; }
+    if (! shuffle) { playTracks (tracks, 0); return; }
+
+    shufflePass = std::move (tracks);
+    std::shuffle (shufflePass.begin(), shufflePass.end(), rng);
+    shuffleNext = 0;
+    lastQueuedKey = 0;
+    const bool wasShuffle = shuffleOn;
+    shuffleOn = false;                                    // the pass is already shuffled
+    const size_t first = std::min<size_t> (shufflePass.size(), 200);
+    playTracks (std::vector<TrackInfo> (shufflePass.begin(), shufflePass.begin() + (std::ptrdiff_t) first), 0);
+    shuffleOn = wasShuffle;
+    shuffleNext = first;
+    shuffleScope = scope;                                 // after playTracks, which clears it
+    if (! queueTracks.empty()) lastQueuedKey = queueTracks.back().id;
+}
+
+void AppController::extendShuffle()
+{
+    // Called on every track change: keep at least 20 tracks queued after the current one.
+    if (shuffleScope.isEmpty() || externalPlaying) return;
+    const int remaining = (int) queueTracks.size() - 1 - eng->getCurrentIndex();
+    if (remaining >= 20) return;
+
+    std::vector<TrackInfo> chunk;
+    while (chunk.size() < 200)
+    {
+        if (shuffleNext >= shufflePass.size())
+        {
+            // new pass over the (possibly changed) collection; its first track must differ from the last one queued
+            shufflePass = collectionTracks (shuffleScope);
+            if (shufflePass.empty()) break;
+            std::shuffle (shufflePass.begin(), shufflePass.end(), rng);
+            const auto last = chunk.empty() ? lastQueuedKey : chunk.back().id;
+            if (shufflePass.size() > 1 && shufflePass.front().id == last) std::swap (shufflePass.front(), shufflePass.back());
+            shuffleNext = 0;
+        }
+        chunk.push_back (shufflePass[shuffleNext++]);
+        if (shufflePass.size() == 1 && chunk.size() >= 1) break;     // a single track: repeat it, one per call
+    }
+    if (chunk.empty()) return;
+    lastQueuedKey = chunk.back().id;
+
+    std::vector<PlayableItem> items;
+    for (auto& t : chunk)
+        if (unified->routeFor (t) == PlaybackRoute::Engine) { queueTracks.push_back (t); items.push_back (unified->toPlayable (t)); }
+    if (! items.empty()) eng->appendToQueue (std::move (items));
 }
 
 void AppController::enqueue (const std::vector<TrackInfo>& tracks)
@@ -522,6 +621,7 @@ void AppController::onTrackChanged()
         if (t == nullptr || t->artworkKey != nowPlayingArtworkSent) nowPlayingArtworkSent = "none:" + juce::String (juce::Random::getSystemRandom().nextInt());
     }
     updateSystemNowPlaying (true);
+    extendShuffle();
     if (auto* m = getMainComponent()) m->trackChanged();
     if (miniWindow) miniWindow->getMini().trackChanged();
     if (const auto* t = currentTrack())

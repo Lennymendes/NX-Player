@@ -57,6 +57,11 @@ PlayerBar::PlayerBar (AppContext& c)
     volume.setValue (1.0, juce::dontSendNotification);
     volume.setTooltip ("Volume numérique 64 bits. À 100 %, le flux reste bit-perfect."_t);
     addAndMakeVisible (volume);
+    volumeLock.setJustificationType (juce::Justification::centred);
+    volumeLock.setFont (style::font (12.0f, true));
+    volumeLock.setColour (juce::Label::textColourId, ctx.theme().textCol());
+    volumeLock.setInterceptsMouseClicks (false, false);
+    addChildComponent (volumeLock);
 
     playButton.onClick = [this] { ctx.engine().togglePlayPause(); };
     nextButton.onClick = [this] { ctx.engine().next(); };
@@ -66,7 +71,7 @@ PlayerBar::PlayerBar (AppContext& c)
     lyricsButton.onClick = [this] { if (onToggleLyrics) onToggleLyrics(); };
     queueButton.onClick = [this] { if (onToggleQueue) onToggleQueue(); };
     miniButton.onClick = [this] { ctx.toggleMiniPlayer(); };
-    volumeButton.onClick = [this] { volume.setValue (volume.getValue() > 0.0 ? 0.0 : 1.0); };
+    volumeButton.onClick = [this] { if (volume.isEnabled()) volume.setValue (volume.getValue() > 0.0 ? 0.0 : 1.0); };
     seek.onSeek = [this] (double s) { ctx.engine().seek (s); };
     badge.onClick = [this] { if (onShowSignalPath) onShowSignalPath(); };
 
@@ -175,6 +180,7 @@ void PlayerBar::resized()
     studioButton.setBounds (right.removeFromRight (ib));
     volumeButton.setBounds (right.removeFromLeft (ib));
     volume.setBounds (right.reduced (4, 0));
+    volumeLock.setBounds (volumeButton.getBounds().getUnion (volume.getBounds()));
 }
 
 void PlayerBar::mouseUp (const juce::MouseEvent& e)
@@ -272,11 +278,21 @@ void PlayerBar::stateChanged()
         resized();
     }
     {
-        // RME "DSD Direct" safety: the profile holds the software volume at 100 %
-        const bool locked = ctx.engine().isVolumeLockedByProfile();
+        // DoP is a bit-exact DSD carrier (a gain would turn it into noise), and the RME "DSD Direct" profile
+        // holds the software volume at 100 %: in both cases the control is greyed out and inert.
+        const bool dop = ! path.nodes.empty() && plan.wire == WireFormat::DoP;
+        const bool profile = ctx.engine().isVolumeLockedByProfile();
+        const bool locked = dop || profile;
         volume.setEnabled (! locked);
-        volume.setTooltip (locked ? juce::String ("Volume verrouillé à 100 % par le profil RME (DSD Direct) : réglez le niveau en analogique."_t)
-                                  : juce::String ("Volume numérique 64 bits. À 100 %, le flux reste bit-perfect."_t));
+        volume.setInterceptsMouseClicks (! locked, ! locked);   // no click, drag or wheel
+        volume.setAlpha (locked ? 0.25f : 1.0f);
+        volumeButton.setEnabled (! locked);
+        volumeButton.setAlpha (locked ? 0.4f : 1.0f);
+        volumeLock.setVisible (locked);
+        volumeLock.setText (dop ? "Volume Fixe / DoP"_t : "Volume Fixe"_t, juce::dontSendNotification);
+        volume.setTooltip (dop ? juce::String ("Volume fixe en DoP : le flux DSD est transmis tel quel, réglez le niveau en analogique."_t)
+                         : profile ? juce::String ("Volume verrouillé à 100 % par le profil RME (DSD Direct) : réglez le niveau en analogique."_t)
+                                   : juce::String ("Volume numérique 64 bits. À 100 %, le flux reste bit-perfect."_t));
     }
     lyricsButton.repaint();
     studioButton.active = ctx.studioTools().anyActive();

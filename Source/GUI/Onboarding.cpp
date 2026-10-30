@@ -320,7 +320,7 @@ void OnboardingWizard::paintLanguage (juce::Graphics& g, juce::Rectangle<int> r)
         const auto& th = themes[(size_t) i];
         auto tile = row.removeFromLeft (tw);
         row.removeFromLeft (14);
-        const bool on = ctx.theme().id == th.id;
+        const bool on = ctx.selectedThemeId() == th.id;
         tileFrame (g, t, tile.toFloat(), on, tile.contains (mouse));
         // swatch: background + glass + accents
         auto sw = tile.reduced (14).removeFromTop (tile.getHeight() - 60).toFloat();
