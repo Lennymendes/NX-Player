@@ -177,9 +177,14 @@ void RemoteServer::handle (juce::StreamingSocket& s)
         sendText (200, "text/html; charset=utf-8", webApp);
         return;
     }
+    if (path == "/icon.png" || path == "/favicon.ico" || path == "/apple-touch-icon.png")
+    {
+        send (s, 200, "image/png", NXData::icon_png, (size_t) NXData::icon_pngSize);
+        return;
+    }
     if (path == "/manifest.json")
     {
-        sendText (200, "application/manifest+json", R"({"name":"NX Remote","short_name":"NX Remote","display":"standalone","background_color":"#0A0C0E","theme_color":"#0A0C0E","start_url":"/"})");
+        sendText (200, "application/manifest+json", R"({"name":"NX Remote","short_name":"NX Remote","display":"standalone","background_color":"#0A0C0E","theme_color":"#0A0C0E","start_url":"/","icons":[{"src":"/icon.png","sizes":"192x192","type":"image/png"}]})");
         return;
     }
     if (! path.startsWith ("/api/")) { sendText (404, "text/plain", "not found"); return; }

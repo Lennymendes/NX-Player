@@ -7,6 +7,8 @@
 #include "TestAudioFiles.h"
 #include "CoverFixtures.h"
 #include "../Source/Core/ImageDecode.h"
+#include "../Source/GUI/Logo.h"
+#include "NXPlayerData.h"
 #include "../Source/Ext/ThemeEngine.h"
 #include "../Source/Ext/PluginManager.h"
 #include "../Source/GUI/AppController.h"
@@ -727,6 +729,14 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         juce::PNGImageFormat().writeImageToStream (big, png);
         const auto bigKey = app.library().storeArtwork (juce::MemoryBlock (png.getData(), png.getDataSize()), "image/png");
         const auto small = juce::ImageFileFormat::loadFrom (app.remoteArtwork (bigKey, 600).getData(), app.remoteArtwork (bigKey, 600).getSize());
+        {
+            // official logo: vector drawn from the embedded SVG (opaque centre, transparent margin), icon served to the phone
+            juce::Image im (juce::Image::ARGB, 128, 128, true);
+            { juce::Graphics g (im); nx::logo::draw (g, im.getBounds().toFloat()); }
+            t.check (im.getPixelAt (64, 20).getAlpha() > 200 && im.getPixelAt (0, 0).getAlpha() < 20 && im.getPixelAt (40, 64).getBrightness() > 0.0f
+                     && NXData::icon_pngSize > 1000 && ((const unsigned char*) NXData::icon_png)[1] == 'P',
+                     "logo NX Player : SVG vectoriel dessiné, icône NX Remote embarquée"_t);
+        }
         t.check (small.isValid() && small.getWidth() == 600 && small.getHeight() == 386, "NX Remote : pochette réduite à 600 px max, proportions gardées"_t);
         // no key at all: the cover next to the file (cover / folder / front) is found through the track id
         const auto dir = t.tempDir.getChildFile ("remote-cover");

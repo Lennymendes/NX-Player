@@ -591,5 +591,6 @@
  "SACD : piste introuvable dans l'image": "SACD: track not found in the image",
  "SACD : chemin de piste invalide": "SACD: invalid track path",
  "Catalogue : ": "Catalogue: ",
- "Piste ": "Track "
+ "Piste ": "Track ",
+  "logo NX Player : SVG vectoriel dessiné, icône NX Remote embarquée": "NX Player logo: vector SVG drawn, NX Remote icon embedded"
 }

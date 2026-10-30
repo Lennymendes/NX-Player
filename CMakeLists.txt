@@ -158,7 +158,7 @@ target_include_directories(NXPlayer PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generat
 juce_add_binary_data(NXPlayerData
     HEADER_NAME NXPlayerData.h
     NAMESPACE NXData
-    SOURCES Resources/AppIcon_256.png Resources/i18n/en.json Resources/remote/index.html)
+    SOURCES Resources/AppIcon_256.png Resources/NXPlayerLogo.svg Resources/i18n/en.json Resources/remote/index.html Resources/remote/icon.png)
 
 set(NX_GL_MODULE "")
 if(NX_ENABLE_OPENGL)

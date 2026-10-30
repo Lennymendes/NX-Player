@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "../Engine/DeviceProfiles.h"
 #include "DeviceArt.h"
+#include "Logo.h"
 #include "../Library/Downloads.h"
 #include "../Providers/StreamingProviders.h"
 #include "../Library/LibraryScanner.h"
@@ -1586,6 +1587,20 @@ void SettingsPage::buildTools()
 void SettingsPage::buildAbout()
 {
     section ("À propos"_t);
+    struct LogoHeader : juce::Component
+    {
+        juce::Colour text;
+        void paint (juce::Graphics& g) override
+        {
+            logo::draw (g, getLocalBounds().removeFromLeft (getHeight()).toFloat());
+            g.setColour (text);
+            g.setFont (style::font (28.0f, true));
+            g.drawText ("NX Player", getLocalBounds().withTrimmedLeft (getHeight() + 16), juce::Justification::centredLeft);
+        }
+    };
+    auto* header = new LogoHeader();
+    header->text = ctx.theme().textCol();
+    fullRow (header, 104);
     row ("NX Player " NX_VERSION " · NX Audio Suite · licence MIT"_t, nullptr, 26);
     row ("Utilise JUCE (AGPLv3 / commercial), SQLite (domaine public), Apple ALAC (Apache 2.0), QR Code generator (Project Nayuki, MIT). Voir THIRD_PARTY_NOTICES.md."_t, nullptr, 40);
     row ("Infos d'artistes : TheAudioDB et Wikipédia (CC BY-SA). Paroles : LRCLIB, lyrics.ovh."_t, nullptr, 26);

@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#0A0C0E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
 <title>NX Remote</title>
 <style>
   :root { --bg:#0A0C0E; --card:rgba(255,255,255,.06); --line:rgba(255,255,255,.09); --text:#EEF3F1; --dim:#8A9792; --accent:#00F5A0; --accent2:#00D9F5; --dsd:#B07CFF; }
@@ -16,7 +18,7 @@
   @media (min-width:760px) and (orientation:portrait) { main { max-width:720px; } }
   header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
   header b { font-size:18px; } #dot { width:9px; height:9px; border-radius:50%; background:var(--dim); margin-left:auto; } #dot.on { background:var(--accent); box-shadow:0 0 10px var(--accent); }
-  .logo { width:26px; height:26px; border-radius:50%; border:3px solid var(--accent); }
+  .logo { width:28px; height:28px; display:block; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; margin-bottom:14px; backdrop-filter:blur(18px); }
   /* A picture is shown only once it has really loaded: the gradient stays underneath, never a broken-image icon */
   .ph { display:block; position:relative; overflow:hidden; background:linear-gradient(135deg,#0b6e4f,#08a4bd); }
@@ -63,7 +65,7 @@
 <div id="glow"></div>
 <main>
   <div class="left">
-    <header><div class="logo"></div><b>NX Remote</b><span id="dot"></span></header>
+    <header><img class="logo" src="/icon.png" alt=""><b>NX Remote</b><span id="dot"></span></header>
     <p id="err" class="card">Accès refusé : scannez à nouveau le QR code affiché dans NX Player.</p>
     <section class="card" id="info">
       <div id="artbox" class="ph"><img id="art" alt=""></div>

@@ -1,6 +1,7 @@
 // NX Player — MIT License
 #include "Sidebar.h"
 #include "LibraryActions.h"
+#include "Logo.h"
 #include "../Providers/MediaProvider.h"
 #include "../Ext/PluginManager.h"
 #include "../Library/Downloads.h"
@@ -259,16 +260,7 @@ void Sidebar::paint (juce::Graphics& g)
     // logo
     auto logo = getLocalBounds().reduced (compact ? 0 : 16, 14).removeFromTop (40);
     auto mark = (compact ? logo : logo.removeFromLeft (30)).toFloat().withSizeKeepingCentre (28, 28);
-    g.setGradientFill (juce::ColourGradient (t.accent(), mark.getX(), mark.getY(), t.accent2(), mark.getRight(), mark.getBottom(), false));
-    g.drawEllipse (mark.reduced (2), 3.0f);
-    juce::Path wave;
-    for (int k = 0; k <= 20; ++k)
-    {
-        const float x = mark.getX() + 7.0f + (float) k * 0.7f;
-        const float y = mark.getCentreY() - 5.0f * std::sin ((float) k / 20.0f * juce::MathConstants<float>::twoPi);
-        if (k == 0) wave.startNewSubPath (x, y); else wave.lineTo (x, y);
-    }
-    g.strokePath (wave, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    nx::logo::draw (g, mark);
     if (! compact)
     {
         logo.removeFromLeft (8);
