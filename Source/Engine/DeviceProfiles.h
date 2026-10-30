@@ -14,8 +14,10 @@ namespace nx
 bool isMergingDevice (const juce::String& deviceName);
 /** "RME" or "ADI-2" in the device name. */
 bool isRmeDevice (const juce::String& deviceName);
+/** "FiiO" or "KA17" in the device name. */
+bool isFiioDevice (const juce::String& deviceName);
 
-enum class DeviceFamily { None, Merging, Rme };
+enum class DeviceFamily { None, Merging, Rme, Fiio };
 /** The family whose profiles apply: the forced hardware profile, else the one recognised from the name. */
 DeviceFamily activeFamily (const EngineSettings& settings, const juce::String& deviceName);
 
@@ -27,6 +29,26 @@ juce::String familyTip (DeviceFamily f);
 juce::String profileName (DeviceFamily f, int index);
 juce::String profileTag (DeviceFamily f, int index);
 juce::String profileDescription (DeviceFamily f, int index);
+
+/** Equipment catalogue (Roon-style device setup): pick your model when the driver name is not recognised. */
+struct DeviceModel
+{
+    const char* id;          // saved in the settings
+    const char* brand;
+    const char* name;
+    const char* series;
+    HardwareProfile hardware;
+    int profile;             // profile of the family applied with the model
+    bool dsd, dop, dxd;      // capabilities shown as tags (dsd = DSD files reach the DAC, as DoP or converted)
+};
+const std::vector<DeviceModel>& deviceModels();
+const DeviceModel* findDeviceModel (const juce::String& id);
+/** Models whose brand / name / series contain every word of the query (all of them when empty). */
+std::vector<const DeviceModel*> searchDeviceModels (const juce::String& query);
+/** Forces the family and profile of the model (and remembers it). */
+void applyDeviceModel (EngineSettings& s, const DeviceModel& m);
+/** Anubis Pro / SPS (PCM / DXD only): DSD is always converted, never sent as DoP. */
+bool modelHasNoDsd (const EngineSettings& s);
 
 /** The settings actually used for this device: the profile's choices override the generic ones. */
 EngineSettings resolveProfile (const EngineSettings& settings, const juce::String& deviceName);

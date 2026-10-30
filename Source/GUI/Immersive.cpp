@@ -290,7 +290,8 @@ void ImmersiveView::renderField()
 
 void ImmersiveView::timerCallback()
 {
-    phase += 1.0 / 30.0;
+    perf::retune (*this, 30, 6);
+    phase += 1.0 / perf::hz (30, 6);
     auto& e = ctx.engine();
     double dur = e.getDurationSeconds();
     if (const auto* t = ctx.currentTrack()) if (dur <= 0) dur = t->duration;

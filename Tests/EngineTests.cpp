@@ -640,8 +640,8 @@ NX_TEST_SECTION (109, "Profils matériel : Merging Anubis / RAVENNA (DXD, phase 
              "Pure DoP : DoP 176,4 kHz, tampon 2048, 2 canaux, 1,5 s de silence DoP"_t);
 
     base.anubisProfile = nx::AnubisProfile::StudioDxdReference;
-    t.check (nx::resolveProfile (base, "FiiO KA17").profileTag.isEmpty()
-             && nx::makePlan (dsd64, caps, nx::resolveProfile (base, "FiiO KA17")).wire == nx::WireFormat::DoP,
+    t.check (nx::resolveProfile (base, "Topping D90").profileTag.isEmpty()
+             && nx::makePlan (dsd64, caps, nx::resolveProfile (base, "Topping D90")).wire == nx::WireFormat::DoP,
              "autres DAC : réglages génériques inchangés (DoP)"_t);
 
     // RME ADI-2 (USB)

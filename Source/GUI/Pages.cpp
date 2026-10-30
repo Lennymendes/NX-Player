@@ -3,6 +3,7 @@
 #include <random>
 #include <algorithm>
 #include "../Engine/DeviceProfiles.h"
+#include "DeviceArt.h"
 #include "../Library/Downloads.h"
 #include "../Providers/StreamingProviders.h"
 #include "../Library/LibraryScanner.h"
@@ -1099,7 +1100,7 @@ namespace
             r.removeFromTop (12);
             g.setColour (t.colour ("--nx-quality-low", juce::Colour (0xffffb547)));
             g.setFont (style::font (12.5f, true));
-            g.drawText (family == DeviceFamily::Merging ? "Astuce MT VAD"_t : "Astuce RME"_t, r.removeFromTop (18), juce::Justification::centredLeft);
+            g.drawText (family == DeviceFamily::Merging ? "Astuce MT VAD"_t : family == DeviceFamily::Fiio ? "Astuce FiiO"_t : "Astuce RME"_t, r.removeFromTop (18), juce::Justification::centredLeft);
             g.setColour (t.textCol().withAlpha (0.85f));
             g.setFont (style::font (12.5f));
             const auto tip = familyTip (family).fromFirstOccurrenceOf (" : ", false, false);
@@ -1126,6 +1127,99 @@ namespace
         juce::String deviceName;
         bool autoDetected;
         std::vector<juce::Rectangle<int>> tiles;
+    };
+
+    /** Equipment catalogue (Roon-style): search your model and apply its profile to the active output. */
+    class DeviceCatalogPanel : public juce::Component
+    {
+    public:
+        DeviceCatalogPanel (AppContext& c, std::function<void()> applied) : ctx (c), onApplied (std::move (applied))
+        {
+            search.setTextToShowWhenEmpty ("Rechercher votre modèle (RME, Anubis, FiiO KA17…)"_t, juce::Colours::grey);
+            search.setFont (style::font (14.0f));
+            search.onTextChange = [this] { results = searchDeviceModels (search.getText()); repaint(); };
+            addAndMakeVisible (search);
+            results = searchDeviceModels ({});
+        }
+
+        static int idealHeight() { return headH + 7 * rowH + 8; }
+        static constexpr int headH = 98, rowH = 46;
+
+        void resized() override { search.setBounds (16, 58, getWidth() - 32, 32); }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto& t = ctx.theme();
+            style::paintGlass (g, *this, ctx, getLocalBounds().toFloat(), t.radius());
+            auto r = getLocalBounds().reduced (16, 12);
+            g.setColour (t.textCol());
+            g.setFont (style::font (15.0f, true));
+            g.drawText ("Gestionnaire d'équipements"_t, r.removeFromTop (22), juce::Justification::centredLeft);
+            g.setColour (t.textDim());
+            g.setFont (style::font (12.0f));
+            g.drawText ("Pilote non reconnu ? Choisissez votre modèle : son profil est appliqué à la sortie active et mémorisé."_t, r.removeFromTop (18), juce::Justification::centredLeft, true);
+            rows.clear();
+            auto list = getLocalBounds().reduced (10, 0).withTrimmedTop (headH);
+            const auto current = ctx.engine().getSettings().deviceModel;
+            for (auto* m : results)
+            {
+                auto row = list.removeFromTop (rowH).reduced (0, 2);
+                rows.push_back ({ row, m });
+                const bool on = current == m->id;
+                const bool hover = row.contains (getMouseXYRelative()) && isMouseOver (true);
+                g.setColour (on ? t.accent().withAlpha (0.18f) : juce::Colours::white.withAlpha (hover ? 0.08f : 0.03f));
+                g.fillRoundedRectangle (row.toFloat(), 8.0f);
+                if (on) { g.setColour (t.accent()); g.drawRoundedRectangle (row.toFloat().reduced (0.5f), 8.0f, 1.4f); }
+                auto in = row.reduced (10, 4);
+                deviceart::drawLogo (g, m->id, in.removeFromLeft (36).toFloat(), on ? t.accent() : t.textCol());
+                in.removeFromLeft (10);
+                auto tags = in.removeFromRight (200);
+                g.setColour (t.textCol());
+                g.setFont (style::font (14.0f, true));
+                g.drawText (juce::String (m->brand) + (*m->brand ? " " : "") + tr (juce::String::fromUTF8 (m->name)), in.removeFromTop (20), juce::Justification::centredLeft, true);
+                g.setColour (t.textDim());
+                g.setFont (style::font (11.5f));
+                g.drawText (m->series[0] ? "Série "_t + m->series : "Profil standard"_t, in, juce::Justification::centredLeft, true);
+                g.setFont (style::font (10.5f, true));
+                juce::StringArray caps;
+                if (m->dsd) caps.add (m->dop ? "DSD · DoP" : "DSD"); else caps.add ("PCM"); 
+                if (m->dxd) caps.add ("DXD");
+                g.setColour (t.accent2());
+                g.drawText (caps.joinIntoString (" · "), tags, juce::Justification::centredRight, true);
+            }
+            if (results.empty())
+            {
+                g.setColour (t.textDim());
+                g.setFont (style::font (13.0f));
+                g.drawText ("Aucun équipement ne correspond."_t, list.removeFromTop (rowH), juce::Justification::centred);
+            }
+        }
+
+        void mouseMove (const juce::MouseEvent&) override { repaint(); }
+        void mouseExit (const juce::MouseEvent&) override { repaint(); }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            for (auto& rw : rows)
+                if (rw.first.contains (e.getPosition()))
+                {
+                    auto s = ctx.engine().getSettings();
+                    applyDeviceModel (s, *rw.second);
+                    ctx.engine().setSettings (s);
+                    ctx.applyEngineSettings();
+                    ctx.showMessage ("Équipement appliqué : "_t + juce::String (rw.second->brand) + " " + tr (juce::String::fromUTF8 (rw.second->name)));
+                    auto cb = onApplied;
+                    juce::MessageManager::callAsync ([cb] { if (cb) cb(); });
+                    return;
+                }
+        }
+
+    private:
+        AppContext& ctx;
+        std::function<void()> onApplied;
+        juce::TextEditor search;
+        std::vector<const DeviceModel*> results;
+        std::vector<std::pair<juce::Rectangle<int>, const DeviceModel*>> rows;
     };
 }
 
@@ -1218,13 +1312,15 @@ void SettingsPage::buildAudio()
     const auto status = eng.getOutputStatus();
     row (status.open ? "État : "_t + status.backendName + " · "_t + formatRate (status.sampleRate) + " · "_t + status.detail : juce::String ("État : périphérique fermé (s'ouvre à la lecture)"_t), nullptr, 28);
 
-    // Hardware profile (Merging Anubis / RAVENNA, RME ADI-2)
+    // Hardware profile (Merging Anubis / RAVENNA, RME ADI-2, FiiO KA17)
     {
-        const juce::StringArray profiles { "Automatique (détection)"_t, "Générique"_t, "Merging Anubis / RAVENNA (AES67)"_t, "RME ADI-2 (USB)" };
+        fullRow (new DeviceCatalogPanel (ctx, [this] { refresh(); }), DeviceCatalogPanel::idealHeight());
+        const juce::StringArray profiles { "Automatique (détection)"_t, "Générique"_t, "Merging Anubis / RAVENNA (AES67)"_t, "RME ADI-2 (USB)", "FiiO KA17 (USB)" };
         row ("Profil matériel"_t, makeCombo (profiles, profiles[(int) s.hardwareProfile], [this, profiles] (const juce::String& v)
         {
             auto st = ctx.engine().getSettings();
             st.hardwareProfile = (HardwareProfile) juce::jmax (0, profiles.indexOf (v));
+            st.deviceModel = {};                 // a manual family choice leaves the catalogue model
             ctx.engine().setSettings (st);
             ctx.applyEngineSettings();
             refresh();
@@ -1305,6 +1401,8 @@ void SettingsPage::buildAudio()
             ctx.applyEngineSettings();
         }), 36, "Un fichier plus gros (DSD512, DXD de plusieurs heures) est lu depuis le disque."_t);
     }
+    row ("Mode Streamer / Gaming"_t, makeToggle (ctx.isStreamerMode(), [this] (bool v) { ctx.setStreamerMode (v); }), 36,
+         "Réduit l'actualisation de l'interface (fond animé, spectre, paroles, transitions) pour libérer le CPU / GPU pendant un jeu ou OBS. La lecture audio n'est pas modifiée."_t);
     row ("Empêcher la mise en veille pendant la lecture"_t, makeToggle ((bool) ctx.settings().get ("preventSleep", true), [this] (bool v) { ctx.settings().set ("preventSleep", v); }), 36,
          SleepBlocker::isSupported() ? "L'ordinateur reste éveillé tant que la musique joue (l'écran peut s'éteindre)."_t
                                      : "Non disponible sur ce système."_t);

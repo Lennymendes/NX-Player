@@ -119,10 +119,11 @@ public:
     int getPreferredHeight() const;
     bool isEmpty() const { return ids.isEmpty(); }
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override { perf::retune (*this, juce::jmax (1, fpsNormal), 2); repaint(); }
     AppContext& ctx;
     juce::String slot;
     bool horizontal;
+    int fpsNormal = 0;
     juce::StringArray ids;
 };
 

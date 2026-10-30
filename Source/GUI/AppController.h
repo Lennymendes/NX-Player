@@ -4,6 +4,7 @@
 
 #include "AppContext.h"
 #include "Waveform.h"
+#include "../Core/Perf.h"
 #include <random>
 #include <algorithm>
 #include "LookAndFeel.h"
@@ -97,6 +98,8 @@ public:
     void setLanguage (const juce::String& code) override;
     void setLayoutOption (const juce::String& key, const juce::var& value) override;
     bool isSleepBlocked() override { return sleepBlocker.isActive(); }
+    bool isStreamerMode() override { return perf::streamer(); }
+    void setStreamerMode (bool on) override;
     void showOnboarding() override;
     void setImmersive (bool on) override;
     void sendToAuraEngine (const std::vector<TrackInfo>& tracks) override;

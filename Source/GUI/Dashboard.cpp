@@ -27,8 +27,10 @@ void HardwareDashboard::refresh()
 
 void HardwareDashboard::timerCallback()
 {
-    phase += 1.0 / 30.0;
-    if (++ticks % 30 == 0) refresh();    // counters once a second, the flow animation at 30 fps
+    perf::retune (*this, 30, 2);
+    const int rate = perf::hz (30, 2);
+    phase += 1.0 / rate;
+    if (++ticks % rate == 0) refresh();    // counters once a second, the flow animation at 30 fps
     repaint();
 }
 

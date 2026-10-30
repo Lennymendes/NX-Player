@@ -42,6 +42,7 @@ void MiniPlayer::trackChanged()
 
 void MiniPlayer::timerCallback()
 {
+    perf::retune (*this, 20, 4);
     play.setIcon (ctx.engine().getState() == PlaybackEngine::State::Playing ? style::Icon::Pause : style::Icon::Play);
     const auto* t = ctx.currentTrack();
     seek.setPosition (ctx.engine().getPositionSeconds(), t ? t->duration : 0.0);

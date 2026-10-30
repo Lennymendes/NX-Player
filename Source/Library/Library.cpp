@@ -122,6 +122,8 @@ bool Library::createSchema (juce::String& error)
         INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', '1');
     )SQL";
     if (! db.exec (schema)) { error = db.lastError(); return false; }
+    // Fields edited by hand (bits: 1 album, 2 album artist, 4 year, 8 cover): a rescan never overwrites them.
+    db.exec ("ALTER TABLE tracks ADD COLUMN locked INTEGER DEFAULT 0");   // fails harmlessly when the column exists
     loadOfflineIndex();
 
     // Full-text search (FTS5) when this SQLite has it; LIKE otherwise.
@@ -148,11 +150,13 @@ juce::int64 Library::upsert (TrackInfo& t)
                             duration, codec, sample_rate, bits, channels, is_dsd, lossy, file_size, mtime, added, artwork, lyrics_path, credits)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
         ON CONFLICT (source, external_id) DO UPDATE SET
-            uri = excluded.uri, title = excluded.title, artist = excluded.artist, album_artist = excluded.album_artist,
-            album = excluded.album, genre = excluded.genre, composer = excluded.composer, year = excluded.year,
+            uri = excluded.uri, title = excluded.title, artist = excluded.artist, album_artist = CASE WHEN tracks.locked & 2 THEN tracks.album_artist ELSE excluded.album_artist END,
+            album = CASE WHEN tracks.locked & 1 THEN tracks.album ELSE excluded.album END, genre = excluded.genre, composer = excluded.composer,
+            year = CASE WHEN tracks.locked & 4 THEN tracks.year ELSE excluded.year END,
             track_no = excluded.track_no, disc_no = excluded.disc_no, duration = excluded.duration, codec = excluded.codec,
             sample_rate = excluded.sample_rate, bits = excluded.bits, channels = excluded.channels, is_dsd = excluded.is_dsd,
-            lossy = excluded.lossy, file_size = excluded.file_size, mtime = excluded.mtime, artwork = excluded.artwork,
+            lossy = excluded.lossy, file_size = excluded.file_size, mtime = excluded.mtime,
+            artwork = CASE WHEN tracks.locked & 8 THEN tracks.artwork ELSE excluded.artwork END,
             lyrics_path = excluded.lyrics_path, credits = excluded.credits
     )SQL");
     s.bind (1, t.source).bind (2, t.externalId).bind (3, t.uri).bind (4, t.title).bind (5, t.artist).bind (6, t.albumArtist)
@@ -786,7 +790,8 @@ int Library::updateAlbum (const juce::String& artist, const juce::String& album,
     }
     std::lock_guard<std::recursive_mutex> l (db.getMutex());
     SqliteStatement u (db, "UPDATE tracks SET album = ?3, album_artist = ?4, year = CASE WHEN ?5 > 0 THEN ?5 ELSE year END, "
-                           "artwork = CASE WHEN ?6 != '' THEN ?6 ELSE artwork END "
+                           "artwork = CASE WHEN ?6 != '' THEN ?6 ELSE artwork END, "
+                           "locked = locked | 3 | (CASE WHEN ?5 > 0 THEN 4 ELSE 0 END) | (CASE WHEN ?6 != '' THEN 8 ELSE 0 END) "
                            "WHERE album = ?2 AND COALESCE(NULLIF(album_artist, ''), artist) = ?1");
     u.bind (1, artist).bind (2, album).bind (3, newAlbum.trim()).bind (4, newArtist.trim()).bind (5, newYear).bind (6, cover).execute();
     SqliteStatement c (db, "SELECT changes()");

@@ -10,6 +10,7 @@ juce::String familyName (DeviceFamily f)
     {
         case DeviceFamily::Merging: return "Merging Anubis";
         case DeviceFamily::Rme:     return "RME ADI-2 Pro";
+        case DeviceFamily::Fiio:    return "FiiO KA17";
         case DeviceFamily::None:    break;
     }
     return "DAC";
@@ -196,6 +197,28 @@ namespace
         jack (g, { r.getX() + r.getWidth() * 0.55f, r.getCentreY() }, r.getHeight() * 0.1f);
         knob (g, { r.getRight() - r.getWidth() * 0.18f, r.getCentreY() }, r.getHeight() * 0.28f, t.accent(), level, lit);
     }
+
+    /** Portable USB DAC / amp (FiiO KA17 style): slim body, USB-C plug, two headphone jacks and a volume wheel. */
+    void drawFiio (juce::Graphics& g, juce::Rectangle<float> area, const Theme& t, float level, bool lit)
+    {
+        auto r = fit (area, 3.0f);
+        auto plug = r.removeFromLeft (r.getWidth() * 0.10f).reduced (0.0f, r.getHeight() * 0.3f);
+        g.setColour (juce::Colour (0xff8d949b));
+        g.fillRoundedRectangle (plug, plug.getHeight() * 0.3f);
+        juce::Path body;
+        body.addRoundedRectangle (r, r.getHeight() * 0.22f);
+        juce::DropShadow (juce::Colours::black.withAlpha (0.5f), (int) (r.getHeight() * 0.25f), { 0, (int) (r.getHeight() * 0.08f) }).drawForPath (g, body);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3b4046), r.getX(), r.getY(), juce::Colour (0xff15171a), r.getX(), r.getBottom(), false));
+        g.fillPath (body);
+        g.setColour (juce::Colours::white.withAlpha (0.12f));
+        g.strokePath (body, juce::PathStrokeType (1.2f));
+        const float d = r.getHeight() * 0.26f;
+        for (int i = 0; i < 2; ++i)
+            jack (g, { r.getX() + r.getWidth() * (0.16f + 0.17f * (float) i), r.getCentreY() }, d * 0.5f);
+        g.setColour (lit && level > 0.05f ? t.accent() : juce::Colour (0xff3a3f44));
+        g.fillEllipse (juce::Rectangle<float> (d * 0.4f, d * 0.4f).withCentre ({ r.getX() + r.getWidth() * 0.55f, r.getCentreY() }));
+        knob (g, { r.getRight() - r.getWidth() * 0.17f, r.getCentreY() }, r.getHeight() * 0.62f, t.accent(), level, lit);
+    }
 }
 
 void draw (juce::Graphics& g, DeviceFamily family, juce::Rectangle<float> r, const Theme& t, float level, bool lit)
@@ -204,6 +227,7 @@ void draw (juce::Graphics& g, DeviceFamily family, juce::Rectangle<float> r, con
     {
         case DeviceFamily::Merging: drawAnubis (g, r, t, level, lit); return;
         case DeviceFamily::Rme:     drawRme (g, r, t, level, lit); return;
+        case DeviceFamily::Fiio:    drawFiio (g, r, t, level, lit); return;
         case DeviceFamily::None:    drawGeneric (g, r, t, level, lit); return;
     }
 }
@@ -237,6 +261,15 @@ void drawGlyph (juce::Graphics& g, DeviceFamily family, juce::Rectangle<float> r
             g.drawEllipse (juce::Rectangle<float> (b.getHeight() * 0.62f, b.getHeight() * 0.62f).withCentre ({ b.getRight() - b.getWidth() * 0.15f, b.getCentreY() }), s);
             break;
         }
+        case DeviceFamily::Fiio:
+        {
+            auto b = r.withSizeKeepingCentre (r.getWidth(), r.getHeight() * 0.36f);
+            g.drawRoundedRectangle (b, b.getHeight() * 0.4f, s);
+            for (int i = 0; i < 2; ++i)
+                g.fillEllipse (juce::Rectangle<float> (b.getHeight() * 0.34f, b.getHeight() * 0.34f).withCentre ({ b.getX() + b.getWidth() * (0.2f + 0.16f * (float) i), b.getCentreY() }));
+            g.drawEllipse (juce::Rectangle<float> (b.getHeight() * 0.66f, b.getHeight() * 0.66f).withCentre ({ b.getRight() - b.getWidth() * 0.18f, b.getCentreY() }), s);
+            break;
+        }
         case DeviceFamily::None:
         {
             auto b = r.withSizeKeepingCentre (r.getWidth() * 0.9f, r.getHeight() * 0.48f);
@@ -245,6 +278,54 @@ void drawGlyph (juce::Graphics& g, DeviceFamily family, juce::Rectangle<float> r
             g.drawEllipse (juce::Rectangle<float> (b.getHeight() * 0.56f, b.getHeight() * 0.56f).withCentre ({ b.getRight() - b.getWidth() * 0.2f, b.getCentreY() }), s);
             break;
         }
+    }
+}
+
+/** Original emblem per brand / series (geometric, drawn here: not the manufacturers' trademarks). */
+void drawLogo (juce::Graphics& g, const juce::String& modelId, juce::Rectangle<float> r, juce::Colour c)
+{
+    auto b = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight()), juce::jmin (r.getWidth(), r.getHeight())).reduced (1.5f);
+    const float s = juce::jmax (1.4f, b.getWidth() * 0.07f);
+    g.setColour (c);
+    if (modelId.startsWith ("rme-adi2"))
+    {
+        // ADI-2: rounded square holding a bar chart; Pro = 2 more bars, Pro AE = a ring on top
+        g.drawRoundedRectangle (b, b.getWidth() * 0.2f, s);
+        const int bars = modelId == "rme-adi2-dac" ? 3 : 5;
+        const float bw = b.getWidth() * 0.5f / (float) bars;
+        for (int i = 0; i < bars; ++i)
+        {
+            const float h = b.getHeight() * (0.22f + 0.14f * (float) ((i * 2) % 3));
+            g.fillRect (b.getX() + b.getWidth() * 0.25f + (float) i * bw, b.getBottom() - b.getHeight() * 0.22f - h, bw * 0.6f, h);
+        }
+        if (modelId == "rme-adi2-pro-ae") g.drawEllipse (b.getCentreX() - b.getWidth() * 0.12f, b.getY() + b.getHeight() * 0.1f, b.getWidth() * 0.24f, b.getWidth() * 0.24f, s * 0.7f);
+    }
+    else if (modelId.startsWith ("merging"))
+    {
+        // Anubis: concentric network rings; Premium = full waves (DSD), Pro / SPS = rings only
+        g.drawEllipse (b.reduced (b.getWidth() * 0.04f), s);
+        g.drawEllipse (b.reduced (b.getWidth() * 0.26f), s);
+        g.fillEllipse (b.withSizeKeepingCentre (b.getWidth() * 0.16f, b.getHeight() * 0.16f));
+        if (modelId == "merging-anubis-premium")
+        {
+            juce::Path w;
+            w.startNewSubPath (b.getX(), b.getCentreY());
+            for (int i = 1; i <= 16; ++i)
+                w.lineTo (b.getX() + b.getWidth() * (float) i / 16.0f, b.getCentreY() - std::sin ((float) i * 0.8f) * b.getHeight() * 0.1f);
+            g.strokePath (w, juce::PathStrokeType (s * 0.7f));
+        }
+    }
+    else if (modelId.startsWith ("fiio"))
+    {
+        // KA: pill body with a volume wheel
+        auto pill = b.withSizeKeepingCentre (b.getWidth(), b.getHeight() * 0.5f);
+        g.drawRoundedRectangle (pill, pill.getHeight() * 0.5f, s);
+        g.drawEllipse (juce::Rectangle<float> (pill.getHeight() * 0.6f, pill.getHeight() * 0.6f).withCentre ({ pill.getRight() - pill.getHeight() * 0.5f, pill.getCentreY() }), s * 0.8f);
+        g.fillEllipse (juce::Rectangle<float> (pill.getHeight() * 0.22f, pill.getHeight() * 0.22f).withCentre ({ pill.getX() + pill.getHeight() * 0.5f, pill.getCentreY() }));
+    }
+    else
+    {
+        deviceart::drawGlyph (g, DeviceFamily::None, b, c);
     }
 }
 

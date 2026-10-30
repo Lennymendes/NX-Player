@@ -41,6 +41,7 @@ AppController::AppController (Options options)
     appSettings.load();
     i18n::setLanguage (appSettings.get ("language", "fr").toString());
     applyLayoutSettings();
+    perf::setStreamer ((bool) appSettings.get ("streamerMode", false));
 
     juce::String err;
     if (! lib.open (dataDir, err)) juce::Logger::writeToLog ("bibliothèque : "_t + err);
@@ -266,7 +267,9 @@ void AppController::loadEngineSettings()
         s.dsdToPcmGainDb = (double) v.getProperty ("dsdGain", 0.0);
         s.exclusive = (bool) v.getProperty ("exclusive", true);
         s.bufferMilliseconds = (int) v.getProperty ("bufferMs", 0);
-        s.hardwareProfile = (HardwareProfile) juce::jlimit (0, 3, (int) v.getProperty ("hardwareProfile", 0));
+        s.hardwareProfile = (HardwareProfile) juce::jlimit (0, 4, (int) v.getProperty ("hardwareProfile", 0));
+        s.fiioProfile = juce::jlimit (0, 1, (int) v.getProperty ("fiioProfile", 0));
+        s.deviceModel = v.getProperty ("deviceModel", {}).toString();
         s.rmeProfile = (RmeProfile) juce::jlimit (0, 1, (int) v.getProperty ("rmeProfile", 0));
         s.rmeLockVolume = (bool) v.getProperty ("rmeLockVolume", true);
         s.anubisProfile = (AnubisProfile) juce::jlimit (0, 2, (int) v.getProperty ("anubisProfile", 0));
@@ -295,6 +298,8 @@ void AppController::saveEngineSettings()
     o->setProperty ("anubisDsdGain", s.anubisDsdGainDb);
     o->setProperty ("anubisHarmonics", s.anubisHarmonics);
     o->setProperty ("rmeProfile", (int) s.rmeProfile);
+    o->setProperty ("fiioProfile", s.fiioProfile);
+    o->setProperty ("deviceModel", s.deviceModel);
     o->setProperty ("rmeLockVolume", s.rmeLockVolume);
     o->setProperty ("memoryPlay", s.memoryPlay);
     o->setProperty ("memoryPlayMaxMb", s.memoryPlayMaxMb);
@@ -667,6 +672,7 @@ void AppController::loadLyrics (const TrackInfo& t)
 
 void AppController::timerCallback()
 {
+    perf::retune (*this, 30, 8);
     const double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
     const double dt = juce::jlimit (0.001, 0.2, now - lastFrame);
     lastFrame = now;
@@ -778,6 +784,19 @@ void AppController::setLayoutOption (const juce::String& key, const juce::var& v
     if (auto* m = getMainComponent()) { m->resized(); m->sidebar.resized(); m->repaint(); }
 }
 
+void AppController::setStreamerMode (bool on)
+{
+    perf::setStreamer (on);
+    appSettings.set ("streamerMode", on);
+    if (auto* m = getMainComponent())
+    {
+        m->streamerButton.active = on;
+        m->streamerButton.repaint();
+        m->repaint();
+    }
+    showMessage (on ? "Mode Streamer / Gaming activé : interface au repos, audio inchangé"_t : "Mode Streamer / Gaming désactivé"_t);
+}
+
 void AppController::showOnboarding()
 {
     if (auto* m = getMainComponent()) m->showOnboarding();
@@ -840,7 +859,7 @@ juce::String AppController::buildRemoteState()
     const auto settings = eng->getSettings();
     const auto family = activeFamily (settings, eng->getDeviceName());
     o->setProperty ("device", eng->getDeviceName());
-    o->setProperty ("family", family == DeviceFamily::Merging ? "merging" : family == DeviceFamily::Rme ? "rme" : "");
+    o->setProperty ("family", family == DeviceFamily::Merging ? "merging" : family == DeviceFamily::Rme ? "rme" : family == DeviceFamily::Fiio ? "fiio" : "");
     juce::Array<juce::var> profiles;
     for (int i = 0; i < familyProfileCount (family); ++i) profiles.add (profileName (family, i));
     o->setProperty ("profiles", profiles);

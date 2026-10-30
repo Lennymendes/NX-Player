@@ -2,6 +2,7 @@
 // What every UI component can reach: the services and the navigation / playback actions.
 #pragma once
 
+#include "../Core/Perf.h"
 #include "../Library/Library.h"
 #include "../Engine/PlaybackEngine.h"
 #include "../Ext/ThemeEngine.h"
@@ -112,6 +113,9 @@ public:
     /** Layout presets of the onboarding / settings: sidebar "wide" | "compact", player "bottom" | "top". */
     virtual void setLayoutOption (const juce::String& key, const juce::var& value) = 0;
     virtual bool isSleepBlocked() = 0;
+    /** Streamer / Gaming mode: interface refresh reduced to a minimum (saved in the settings). */
+    virtual bool isStreamerMode() = 0;
+    virtual void setStreamerMode (bool on) = 0;
     /** First-run assistant (also from Réglages › Interface). */
     virtual void showOnboarding() = 0;
     virtual void setImmersive (bool on) = 0;

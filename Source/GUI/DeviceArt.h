@@ -16,6 +16,8 @@ namespace deviceart
     void draw (juce::Graphics& g, DeviceFamily family, juce::Rectangle<float> r, const Theme& t, float level = 0.0f, bool lit = true);
     /** Small monochrome glyph for the player bar (16–28 px). */
     void drawGlyph (juce::Graphics& g, DeviceFamily family, juce::Rectangle<float> r, juce::Colour c);
+    /** Emblem of a catalogue model (DeviceModel::id), monochrome. */
+    void drawLogo (juce::Graphics& g, const juce::String& modelId, juce::Rectangle<float> r, juce::Colour c);
     juce::String familyName (DeviceFamily family);
 }
 

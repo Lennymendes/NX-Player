@@ -482,6 +482,43 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         st.hardwareProfile = nx::HardwareProfile::Auto;
         app.engine().setSettings (st);
     }
+    // Step 4: equipment catalogue (search, apply, save) and the Streamer / Gaming mode
+    {
+        t.check (nx::searchDeviceModels ("adi").size() == 3 && nx::searchDeviceModels ("ka17").size() == 1
+                 && nx::searchDeviceModels ("anubis pro").size() == 1 && nx::searchDeviceModels ("zzz").empty(),
+                 "catalogue : la recherche trouve ADI-2 (3), KA17, Anubis Pro"_t);
+        auto st = app.engine().getSettings();
+        nx::applyDeviceModel (st, *nx::findDeviceModel ("merging-anubis-pro"));
+        app.engine().setSettings (st);
+        app.applyEngineSettings();
+        const auto pro = nx::resolveProfile (app.engine().getSettings(), "Carte quelconque");
+        t.check (pro.dsdMode == nx::DsdMode::ConvertToPcm && ! pro.dopAllowed && pro.profileTag == "Anubis Ref",
+                 "Anubis Pro / SPS : pas de DSD natif, jamais de DoP (conversion DXD)"_t);
+        nx::applyDeviceModel (st, *nx::findDeviceModel ("merging-anubis-premium"));
+        st.anubisProfile = nx::AnubisProfile::PureDoP;
+        t.check (nx::resolveProfile (st, "Carte quelconque").dsdMode == nx::DsdMode::DoP, "Anubis Premium : DoP disponible"_t);
+        nx::applyDeviceModel (st, *nx::findDeviceModel ("fiio-ka17"));
+        t.check (nx::resolveProfile (st, "USB DAC").dsdMode == nx::DsdMode::DoP, "FiiO KA17 : DoP, profil appliqué à un pilote non reconnu"_t);
+        st.fiioProfile = 1;
+        t.check (nx::resolveProfile (st, "USB DAC").dsdMode == nx::DsdMode::ConvertToPcm, "FiiO KA17 : profil DXD"_t);
+        nx::applyDeviceModel (st, *nx::findDeviceModel ("rme-adi2-pro-ae"));
+        app.engine().setSettings (st);
+        app.applyEngineSettings();
+        t.check (app.settings().get ("engine").getProperty ("deviceModel", {}).toString() == "rme-adi2-pro-ae", "équipement choisi enregistré dans les préférences"_t);
+        st.hardwareProfile = nx::HardwareProfile::Auto;
+        st.deviceModel = {};
+        app.engine().setSettings (st);
+        app.applyEngineSettings();
+
+        app.setStreamerMode (true);
+        t.check (app.isStreamerMode() && (bool) app.settings().get ("streamerMode", false) && main->streamerButton.active
+                 && nx::perf::hz (30, 4) == 4, "mode Streamer : activé, enregistré, bouton allumé, timers ralentis"_t);
+        main->player.stateChanged();
+        settle (200);
+        shoot ("16b_mode_streamer");
+        app.setStreamerMode (false);
+        t.check (! app.isStreamerMode() && nx::perf::hz (30, 4) == 30, "mode Streamer : désactivé, cadence normale"_t);
+    }
     // A-B loop markers on the seek bar
     {
         const double len = app.engine().getDurationSeconds();

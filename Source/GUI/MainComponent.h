@@ -83,7 +83,7 @@ public:
     Sidebar sidebar;
     PlayerBar player;
 
-    IconButton sidebarButton, backButton, forwardButton, remoteButton, settingsButton;
+    IconButton sidebarButton, backButton, forwardButton, remoteButton, settingsButton, streamerButton;
 
 private:
     void open (const PageRequest& r);

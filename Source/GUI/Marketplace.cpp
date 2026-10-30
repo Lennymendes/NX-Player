@@ -623,6 +623,7 @@ void MarketplacePage::Header::paint (juce::Graphics& g)
 
 void MarketplacePage::timerCallback()
 {
+    perf::retune (*this, 30, 2);
     if (! isShowing()) return;
     const auto view = viewport.getViewArea();
     for (auto* c : cards)

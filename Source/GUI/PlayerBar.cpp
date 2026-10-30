@@ -339,6 +339,7 @@ void PlayerBar::stateChanged()
 
 void PlayerBar::timerCallback()
 {
+    perf::retune (*this, 30, 4);
     const auto& e = ctx.engine();
     double dur = e.getDurationSeconds();
     if (const auto* t = ctx.currentTrack()) if (dur <= 0) dur = t->duration;

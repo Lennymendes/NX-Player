@@ -102,6 +102,7 @@ MainComponent::MainComponent (AppContext& c)
       forwardButton (style::Icon::ChevronRight, "Suivant"_t, c),
       remoteButton (style::Icon::Phone, "NX Remote : piloter depuis le téléphone (QR code)"_t, c),
       settingsButton (style::Icon::Settings, "Réglages (Cmd/Ctrl + ,)"_t, c),
+      streamerButton (style::Icon::Bolt, "Mode Streamer / Gaming : interface au repos (OBS, jeu), audio inchangé"_t, c),
       ctx (c), listing (c), nowPlaying (c), sourcePage (c), marketplace (c), queue (c), toast (c),
       settingsWindow (c), immersive (c), onboarding (c)
 {
@@ -112,7 +113,9 @@ MainComponent::MainComponent (AppContext& c)
     addChildComponent (nowPlaying);
     addChildComponent (sourcePage);
     addChildComponent (marketplace);
-    for (auto* b : { &sidebarButton, &backButton, &forwardButton, &remoteButton, &settingsButton }) addAndMakeVisible (b);
+    for (auto* b : { &sidebarButton, &backButton, &forwardButton, &remoteButton, &settingsButton, &streamerButton }) addAndMakeVisible (b);
+    streamerButton.active = perf::streamer();
+    streamerButton.onClick = [this] { ctx.setStreamerMode (! ctx.isStreamerMode()); };
     sidebarButton.onClick = [this] { setSidebarVisible (! sidebarVisible); };
     remoteButton.onClick = [this] { showRemote(); };
     settingsButton.onClick = [this] { openSettings ({}); };
@@ -300,6 +303,7 @@ void MainComponent::resized()
     settingsButton.setBounds (nav.removeFromRight (34).reduced (2));
     nav.removeFromRight (4);
     remoteButton.setBounds (nav.removeFromRight (34).reduced (2));
+    streamerButton.setBounds (nav.removeFromRight (34).reduced (2));
     remoteButton.active = ctx.remote().isRunning();
     r.removeFromTop (2);
 
@@ -331,6 +335,7 @@ void MainComponent::showPage (juce::Component* page)
     page->setAlpha (0.0f);
     page->setVisible (true);
     fadeProgress = 0.0f;
+    if (perf::streamer()) { page->setAlpha (1.0f); fadeProgress = 1.0f; return; }   // no transition in Streamer mode
     startTimerHz (60);
 }
 
@@ -340,7 +345,7 @@ void MainComponent::setSidebarVisible (bool visible, bool animate)
     ctx.settings().set ("sidebarVisible", visible);
     sidebarButton.active = false;
     if (visible) sidebar.setVisible (true);
-    if (animate && isShowing()) sidebarAnim.startTimerHz (60);
+    if (animate && isShowing() && ! perf::streamer()) sidebarAnim.startTimerHz (60);
     else { sidebarAmount = visible ? 1.0f : 0.0f; sidebar.setVisible (visible); resized(); }
 }
 

@@ -562,4 +562,13 @@ NX_TEST_SECTION (213, "Étape 3 : pochettes (dossier, formats rares), tri, édit
     const auto edited = lib.getAlbums ("title", 10);
     t.check (n == 1 && edited.size() == 1 && edited.front().title == "Nocturnes (remaster)" && edited.front().artist == "Quatuor Ébène"_t && edited.front().year == 2019,
              "édition d'album : nom, artiste et année mis à jour dans la bibliothèque"_t);
+
+    // a rescan (upsert with the tags read from the file) must keep the fields edited by hand
+    nx::TrackInfo rescanned = tr;
+    rescanned.id = 0;
+    lib.upsert (rescanned);
+    const auto kept = lib.getAlbums ("title", 10);
+    t.check (kept.size() == 1 && kept.front().title == "Nocturnes (remaster)" && kept.front().artist == "Quatuor Ébène"_t
+             && kept.front().year == 2019 && kept.front().artworkKey.isNotEmpty(),
+             "un nouveau scan conserve les champs modifiés à la main (verrou)"_t);
 }

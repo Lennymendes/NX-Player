@@ -245,7 +245,8 @@ void PluginSlot::refreshPlugins()
     ids = ctx.plugins().getEnabledForSlot (slot);
     int fps = 0;
     for (auto& id : ids) fps = juce::jmax (fps, ctx.plugins().getFps (id));
-    if (fps > 0) startTimerHz (fps);
+    fpsNormal = fps;
+    if (fps > 0) startTimerHz (perf::hz (fps, 2));
     else stopTimer();
     repaint();
 }

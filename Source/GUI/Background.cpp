@@ -138,14 +138,16 @@ void BackgroundComponent::updateGlass()
 
 void BackgroundComponent::timerCallback()
 {
+    perf::retune (*this, 30, 1);
+    const bool still = perf::streamer();        // Streamer mode: no animation, the background stays as it is
     const double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
     bool dirty = false;
     if (fade < 1.0f)
     {
-        fade = juce::jmin (1.0f, fade + (1.0f / 30.0f) / 0.8f * ctx.theme().number ("--nx-animation-speed", 1.0f));
+        fade = still ? 1.0f : juce::jmin (1.0f, fade + (1.0f / 30.0f) / 0.8f * ctx.theme().number ("--nx-animation-speed", 1.0f));
         dirty = true;
     }
-    const bool animated = mode == "mesh" || mode == "gradient" || mode == "shader" || ! current.isValid();
+    const bool animated = ! still && (mode == "mesh" || mode == "gradient" || mode == "shader" || ! current.isValid());
     if (animated)
     {
         renderMesh (now - time0);

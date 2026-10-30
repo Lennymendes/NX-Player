@@ -19,6 +19,11 @@ bool isRmeDevice (const juce::String& name)
     return juce::StringArray::fromTokens (name.toUpperCase(), " -_/()[].:", {}).contains ("RME");
 }
 
+bool isFiioDevice (const juce::String& name)
+{
+    return name.containsIgnoreCase ("fiio") || name.containsIgnoreCase ("ka17");
+}
+
 DeviceFamily activeFamily (const EngineSettings& s, const juce::String& deviceName)
 {
     switch (s.hardwareProfile)
@@ -26,30 +31,34 @@ DeviceFamily activeFamily (const EngineSettings& s, const juce::String& deviceNa
         case HardwareProfile::Generic:        return DeviceFamily::None;
         case HardwareProfile::MergingRavenna: return DeviceFamily::Merging;
         case HardwareProfile::RmeAdi2:        return DeviceFamily::Rme;
+        case HardwareProfile::FiioKa17:       return DeviceFamily::Fiio;
         case HardwareProfile::Auto:           break;
     }
     if (isMergingDevice (deviceName)) return DeviceFamily::Merging;
     if (isRmeDevice (deviceName)) return DeviceFamily::Rme;
+    if (isFiioDevice (deviceName)) return DeviceFamily::Fiio;
     return DeviceFamily::None;
 }
 
-int familyProfileCount (DeviceFamily f) { return f == DeviceFamily::Merging ? 3 : f == DeviceFamily::Rme ? 2 : 0; }
+int familyProfileCount (DeviceFamily f) { return f == DeviceFamily::Merging ? 3 : (f == DeviceFamily::Rme || f == DeviceFamily::Fiio) ? 2 : 0; }
 
 int familyCurrentProfile (const EngineSettings& s, DeviceFamily f)
 {
-    return f == DeviceFamily::Merging ? (int) s.anubisProfile : f == DeviceFamily::Rme ? (int) s.rmeProfile : 0;
+    return f == DeviceFamily::Merging ? (int) s.anubisProfile : f == DeviceFamily::Rme ? (int) s.rmeProfile : f == DeviceFamily::Fiio ? s.fiioProfile : 0;
 }
 
 void familySetProfile (EngineSettings& s, DeviceFamily f, int i)
 {
     if (f == DeviceFamily::Merging) s.anubisProfile = (AnubisProfile) juce::jlimit (0, 2, i);
     if (f == DeviceFamily::Rme)     s.rmeProfile = (RmeProfile) juce::jlimit (0, 1, i);
+    if (f == DeviceFamily::Fiio)    s.fiioProfile = juce::jlimit (0, 1, i);
 }
 
 juce::String familyTitle (DeviceFamily f)
 {
     return f == DeviceFamily::Merging ? juce::String ("Merging Anubis · RAVENNA / AES67"_t)
          : f == DeviceFamily::Rme ? juce::String ("RME ADI-2 · USB")
+         : f == DeviceFamily::Fiio ? juce::String ("FiiO KA17 · USB")
          : juce::String();
 }
 
@@ -61,12 +70,16 @@ juce::String familyTip (DeviceFamily f)
     if (f == DeviceFamily::Rme)
         return "Astuce RME : activez « DSD Direct » sur votre ADI-2 Pro uniquement si vous utilisez un contrôle de volume analogique externe "_t
                "(DSD Direct désactive le volume matériel des sorties ligne)."_t;
+    if (f == DeviceFamily::Fiio)
+        return "Astuce FiiO : sous Windows, installez le pilote ASIO FiiO et choisissez-le comme pilote ; sous macOS et Linux le DAC "_t
+               "fonctionne en USB Audio Class 2 sans pilote."_t;
     return {};
 }
 
 juce::String profileName (DeviceFamily f, int i)
 {
     if (f == DeviceFamily::Merging) return anubisProfileName ((AnubisProfile) i);
+    if (f == DeviceFamily::Fiio) return i == 0 ? "FiiO — DoP Bit-Perfect"_t : "FiiO — DSD vers DXD"_t;
     if (i == 0) return "RME — SteadyClock DoP Native"_t;
     return "RME — AKM Velvet DXD"_t;
 }
@@ -74,12 +87,16 @@ juce::String profileName (DeviceFamily f, int i)
 juce::String profileTag (DeviceFamily f, int i)
 {
     if (f == DeviceFamily::Merging) return anubisProfileTag ((AnubisProfile) i);
+    if (f == DeviceFamily::Fiio) return i == 0 ? juce::String ("FiiO DoP") : juce::String ("FiiO DXD");
     return i == 0 ? juce::String ("RME Bit-Perfect") : juce::String ("RME Velvet");
 }
 
 juce::String profileDescription (DeviceFamily f, int i)
 {
     if (f == DeviceFamily::Merging) return anubisProfileDescription ((AnubisProfile) i);
+    if (f == DeviceFamily::Fiio)
+        return i == 0 ? "DSD en DoP 1.0 (jusqu'au DSD256 si le DAC l'annonce), PCM bit-perfect jusqu'à 384 kHz, synchronisation courte de 150 ms."_t
+                      : "DSD converti en DXD 352,8 kHz (+6 dB, phase minimale) : pour une chaîne USB qui ne reconnaît pas le DoP."_t;
     if (i == 0)
         return "Bit-perfect USB : DSD en DoP 1.0 jusqu'au DSD256 (selon les fréquences que l'ADI-2 annonce), synchronisation courte "_t
                "de 150 ms, PCM bit-perfect en mode entier."_t;
@@ -161,10 +178,33 @@ EngineSettings resolveProfile (const EngineSettings& in, const juce::String& dev
         }
         return s;
     }
+    if (family == DeviceFamily::Fiio)
+    {
+        s.profileTag = profileTag (family, in.fiioProfile);
+        if (in.fiioProfile == 0)
+        {
+            s.dsdMode = DsdMode::DoP;
+            s.dopAllowed = true;
+            s.upsampleToDxd = false;
+            s.dopPrerollMs = 150;
+        }
+        else
+        {
+            s.dsdMode = DsdMode::ConvertToPcm;
+            s.maxDsdToPcmRate = 352800.0;
+            s.upsampleToDxd = false;
+            s.dsdToPcmGainDb = 6.0;
+            s.limiter = true;
+            s.filterShape = FilterShape::MinimumPhase;
+        }
+        return s;
+    }
     if (family != DeviceFamily::Merging) return s;
 
-    s.profileTag = anubisProfileTag (in.anubisProfile);
-    switch (in.anubisProfile)
+    const bool noDsd = modelHasNoDsd (in);
+    const auto anubis = noDsd && in.anubisProfile == AnubisProfile::PureDoP ? AnubisProfile::StudioDxdReference : in.anubisProfile;
+    s.profileTag = anubisProfileTag (anubis);
+    switch (anubis)
     {
         case AnubisProfile::StudioDxdReference:
             s.dsdMode = DsdMode::ConvertToPcm;
@@ -193,6 +233,7 @@ EngineSettings resolveProfile (const EngineSettings& in, const juce::String& dev
             s.dopPrerollMs = 1500;
             break;
     }
+    if (noDsd) { s.dsdMode = DsdMode::ConvertToPcm; s.dopAllowed = false; }
     return s;
 }
 
@@ -258,7 +299,58 @@ DeviceFamily familyFromName (const juce::String& deviceName)
 {
     if (isMergingDevice (deviceName)) return DeviceFamily::Merging;
     if (isRmeDevice (deviceName)) return DeviceFamily::Rme;
+    if (isFiioDevice (deviceName)) return DeviceFamily::Fiio;
     return DeviceFamily::None;
+}
+
+const std::vector<DeviceModel>& deviceModels()
+{
+    static const std::vector<DeviceModel> models
+    {
+        { "rme-adi2-dac",   "RME",     "ADI-2 DAC",             "ADI-2",   HardwareProfile::RmeAdi2,        0, true,  true,  true },
+        { "rme-adi2-pro",   "RME",     "ADI-2 Pro",             "ADI-2",   HardwareProfile::RmeAdi2,        0, true,  true,  true },
+        { "rme-adi2-pro-ae","RME",     "ADI-2 Pro AE",          "ADI-2",   HardwareProfile::RmeAdi2,        0, true,  true,  true },
+        { "merging-anubis-premium", "Merging", "Anubis Premium", "Anubis", HardwareProfile::MergingRavenna,  0, true,  true,  true },
+        { "merging-anubis-pro",     "Merging", "Anubis Pro / SPS", "Anubis", HardwareProfile::MergingRavenna, 0, false, false, true },
+        { "fiio-ka17",      "FiiO",    "KA17",                  "KA",      HardwareProfile::FiioKa17,       0, true,  true,  true },
+        { "generic",        "",        "Autre DAC (générique)", "",        HardwareProfile::Generic,        0, true,  true,  false }
+    };
+    return models;
+}
+
+const DeviceModel* findDeviceModel (const juce::String& id)
+{
+    for (auto& m : deviceModels()) if (id == m.id) return &m;
+    return nullptr;
+}
+
+std::vector<const DeviceModel*> searchDeviceModels (const juce::String& query)
+{
+    std::vector<const DeviceModel*> out;
+    const auto words = juce::StringArray::fromTokens (query.trim(), " -", {});
+    for (auto& m : deviceModels())
+    {
+        const juce::String hay = juce::String (m.brand) + " " + juce::String::fromUTF8 (m.name) + " " + m.series + " " + juce::String::fromUTF8 (m.name).replace ("-", " ")
+                               + (juce::String (m.id) == "generic" ? " generique générique autre dac" : "");
+        bool all = true;
+        for (auto& w : words) if (w.isNotEmpty() && ! hay.containsIgnoreCase (w)) { all = false; break; }
+        if (all) out.push_back (&m);
+    }
+    return out;
+}
+
+void applyDeviceModel (EngineSettings& s, const DeviceModel& m)
+{
+    s.deviceModel = m.id;
+    s.hardwareProfile = m.hardware;
+    if (m.hardware == HardwareProfile::MergingRavenna) s.anubisProfile = (AnubisProfile) m.profile;
+    if (m.hardware == HardwareProfile::RmeAdi2)        s.rmeProfile = (RmeProfile) m.profile;
+    if (m.hardware == HardwareProfile::FiioKa17)       s.fiioProfile = m.profile;
+}
+
+bool modelHasNoDsd (const EngineSettings& s)
+{
+    return s.deviceModel == "merging-anubis-pro";
 }
 
 } // namespace nx

@@ -13,7 +13,7 @@ namespace nx
 enum class DsdMode { Auto, Native, DoP, ConvertToPcm };
 
 /** Hardware profile: which device-specific optimisation applies. Auto = recognised from the device name. */
-enum class HardwareProfile { Auto, Generic, MergingRavenna, RmeAdi2 };
+enum class HardwareProfile { Auto, Generic, MergingRavenna, RmeAdi2, FiioKa17 };
 
 /** Sound profiles of a Merging Anubis / RAVENNA (AES67) interface, chosen in one click. */
 enum class AnubisProfile
@@ -51,6 +51,8 @@ struct EngineSettings
     double anubisDsdGainDb = 6.0;        // DSD -> DXD gain in the Anubis profiles: 0, +3 or +6 dB (limiter above 0 dBFS)
     bool anubisHarmonics = true;         // "Analog Warmth": the harmonic / HF shaping stage (can be switched off)
     RmeProfile rmeProfile = RmeProfile::SteadyClockDoP;
+    int fiioProfile = 0;                 // FiiO KA17: 0 = DoP bit-perfect, 1 = DSD -> DXD
+    juce::String deviceModel;            // equipment chosen by hand in the catalogue ("" = none); see DeviceModels
     bool rmeLockVolume = true;           // "Sécurité RME DSD Direct": software volume locked at 100 %
 
     // Filled by resolveProfile() — the effective processing of the current device.

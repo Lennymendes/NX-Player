@@ -98,7 +98,7 @@ inline juce::String formatTime (double seconds)
 enum class Icon { Play, Pause, Next, Previous, Shuffle, Repeat, Volume, VolumeMute, Lyrics, Queue, Mini, Home, Search, Clock,
                   Album, Artist, Song, Playlist, Folder, Network, Cloud, Settings, Heart, Plus, Close, Expand, Signal, Theme, Plugin,
                   ChevronLeft, ChevronRight, SidebarToggle, Grid, Download, Trash,
-                  Phone, Studio, Fullscreen, Lock, FolderPlus, HeartOutline, Check, Globe, Waveform, ChevronDown, Library, Edit, List, GridView };
+                  Phone, Studio, Fullscreen, Lock, FolderPlus, HeartOutline, Check, Globe, Waveform, ChevronDown, Library, Edit, List, GridView, Bolt };
 
 inline juce::Path iconPath (Icon icon)
 {
@@ -182,6 +182,7 @@ inline juce::Path iconPath (Icon icon)
                              p.startNewSubPath (14, 6.5f); p.lineTo (17.5f, 10); break;
         case Icon::List:     for (int i = 0; i < 3; ++i) { const float y = 6.5f + i * 5.5f; p.startNewSubPath (9, y); p.lineTo (20, y); p.addEllipse (3.5f, y - 1.3f, 2.6f, 2.6f); } break;
         case Icon::GridView: for (int i = 0; i < 4; ++i) p.addRoundedRectangle (4.0f + (i % 2) * 8.5f, 4.0f + (i / 2) * 8.5f, 7.0f, 7.0f, 1.5f); break;
+        case Icon::Bolt:     p.startNewSubPath (13.5f, 3); p.lineTo (6, 13.5f); p.lineTo (11.5f, 13.5f); p.lineTo (10.5f, 21); p.lineTo (18, 10.5f); p.lineTo (12.5f, 10.5f); p.closeSubPath(); break;
         case Icon::Library:  p.addRoundedRectangle (3.5f, 4, 4, 16, 1); p.addRoundedRectangle (9.5f, 4, 4, 16, 1); p.startNewSubPath (16, 5); p.lineTo (20.5f, 19.5f); break;
     }
     return p;
