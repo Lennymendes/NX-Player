@@ -711,8 +711,14 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         {
             const auto key = app.library().storeArtwork (juce::MemoryBlock (bytes.first, bytes.second), "image/png");
             const auto jpg = app.remoteArtwork (key, 600);
-            const auto img = juce::ImageFileFormat::loadFrom (jpg.getData(), jpg.getSize());
-            allJpeg = allJpeg && asJpeg (jpg) && img.isValid() && ! img.hasAlphaChannel() && img.getWidth() == 32;
+            // baseline (SOF0), 8 bits, 3 components: read from the file itself, since the native decoders of macOS / Windows
+            // hand back ARGB images whatever the JPEG holds
+            const auto* d = (const unsigned char*) jpg.getData();
+            bool baseline = false;
+            for (size_t i = 2; i + 9 < jpg.getSize(); ++i)
+                if (d[i] == 0xff && d[i + 1] == 0xc0) { baseline = d[i + 4] == 8 && d[i + 9] == 3; break; }
+            const auto img = nx::imagedec::decode (jpg.getData(), jpg.getSize());
+            allJpeg = allJpeg && asJpeg (jpg) && baseline && img.isValid() && img.getWidth() == 32;
         }
         t.check (allJpeg, "NX Remote : WebP, JPEG progressif / CMYK et PNG 16 bits servis en JPEG RGB standard"_t);
         juce::Image big (juce::Image::ARGB, 1400, 900, true);

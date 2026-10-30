@@ -811,19 +811,21 @@ int Library::updateAlbum (const juce::String& artist, const juce::String& album,
 
 int Library::fillMissingArtwork()
 {
-    std::vector<juce::String> todo;
+    // rows grouped by parent folder, compared as File paths (a path may mix "/" and "\\" on Windows)
+    std::map<juce::String, std::vector<juce::int64>> todo;
     {
         std::lock_guard<std::recursive_mutex> l (db.getMutex());
-        SqliteStatement s (db, "SELECT external_id FROM tracks WHERE source = 'local' AND (artwork IS NULL OR artwork = '')");
+        SqliteStatement s (db, "SELECT id, external_id FROM tracks WHERE source = 'local' AND (artwork IS NULL OR artwork = '')");
         while (s.step())
         {
-            const auto dir = juce::File (s.getText (0)).getParentDirectory().getFullPathName();
-            if (coverChecked.insert (dir).second) todo.push_back (dir);
+            const auto dir = juce::File (s.getText (1)).getParentDirectory().getFullPathName();
+            if (coverChecked.count (dir) == 0) todo[dir].push_back (s.getInt64 (0));
         }
     }
     int updated = 0;
-    for (auto& d : todo)
+    for (auto& [d, ids] : todo)
     {
+        coverChecked.insert (d);
         const auto cover = findFolderCover (juce::File (d));
         if (! cover.existsAsFile()) continue;
         juce::MemoryBlock mb;
@@ -831,10 +833,8 @@ int Library::fillMissingArtwork()
         const auto key = storeArtwork (mb, cover.getFileExtension().containsIgnoreCase ("png") ? "image/png" : "image/jpeg");
         if (key.isEmpty()) continue;
         std::lock_guard<std::recursive_mutex> l (db.getMutex());
-        SqliteStatement u (db, "UPDATE tracks SET artwork = ?2 WHERE source = 'local' AND (artwork IS NULL OR artwork = '') "
-                               "AND substr(external_id, 1, length(?1)) = ?1 AND instr(substr(external_id, length(?1) + 1), '/') = 0 "
-                               "AND instr(substr(external_id, length(?1) + 1), '\\') = 0");
-        u.bind (1, d + juce::File::getSeparatorString()).bind (2, key).execute();
+        SqliteStatement u (db, "UPDATE tracks SET artwork = ?2 WHERE id = ?1 AND (artwork IS NULL OR artwork = '')");
+        for (auto id : ids) u.bind (1, id).bind (2, key).execute();
         ++updated;
     }
     return updated;
