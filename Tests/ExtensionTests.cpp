@@ -5,6 +5,8 @@
 #include "FakeUpnp.h"
 #include <set>
 #include "TestAudioFiles.h"
+#include "CoverFixtures.h"
+#include "../Source/Core/ImageDecode.h"
 #include "../Source/Ext/ThemeEngine.h"
 #include "../Source/Ext/PluginManager.h"
 #include "../Source/GUI/AppController.h"
@@ -475,6 +477,25 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         app.engine().setSettings (st);
         app.navigate ({ nx::PageId::Settings });
         t.check (shoot ("16_profil_anubis") > 40, "Réglages : profils Merging Anubis (3 profils, astuce MT VAD)"_t);
+        {   // Step 5 fix: the equipment catalogue (7 cards) can be scrolled fully into view and the page ends with a margin
+            auto& page = main->getSettingsWindow().getPage();
+            juce::Component* catalog = nullptr;
+            for (auto* c : page.content().getChildren()) if (c->getHeight() == 98 + 7 * 46 + 8) catalog = c;
+            t.check (catalog != nullptr, "Réglages : le gestionnaire d'équipements est présent"_t);
+            if (catalog != nullptr)
+            {
+                page.setScrollY (catalog->getY() - 16);
+                settle (100);
+                t.check (catalog->getBottom() <= page.getScrollY() + page.getHeight(), "Réglages : les 7 cartes d'équipements tiennent dans la zone visible, sans troncature"_t);
+                shoot ("16c_gestionnaire_equipements");
+            }
+            page.setScrollY (100000);
+            settle (100);
+            int lowest = 0;
+            for (auto* c : page.content().getChildren()) if (c != catalog) lowest = juce::jmax (lowest, c->getBottom());
+            t.check (page.getScrollY() + page.getHeight() >= page.content().getHeight(), "Réglages : le bas de la page est atteignable"_t);
+            page.setScrollY (0);
+        }
         st.hardwareProfile = nx::HardwareProfile::RmeAdi2;
         app.engine().setSettings (st);
         app.navigate ({ nx::PageId::Settings });
@@ -507,6 +528,8 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         t.check (app.settings().get ("engine").getProperty ("deviceModel", {}).toString() == "rme-adi2-pro-ae", "équipement choisi enregistré dans les préférences"_t);
         st.hardwareProfile = nx::HardwareProfile::Auto;
         st.deviceModel = {};
+        st.anubisProfile = nx::AnubisProfile::StudioDxdReference;   // do not leak Pure DoP / FiiO choices into the next tests
+        st.fiioProfile = 0;
         app.engine().setSettings (st);
         app.applyEngineSettings();
 
@@ -651,14 +674,79 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
                  "état NX Remote : morceau, volume, profils Anubis ("_t + state.getProperty ("device", {}).toString() + ")");
         juce::StringPairArray p;
         p.set ("v", "0.5");
-        app.handleRemoteCommand ("volume", p);
+        // the volume slider is greyed (and the command ignored) while the previous track still holds a fixed volume:
+        // wait until the engine has moved on instead of racing it
+        for (int i = 0; i < 40; ++i)
+        {
+            main->player.stateChanged();
+            app.handleRemoteCommand ("volume", p);
+            if (std::abs (app.getUserVolume() - 0.5) < 0.01) break;
+            settle (100);
+        }
         const double v = app.getUserVolume();
         p.set ("i", "2");
         app.handleRemoteCommand ("profile", p);
         const bool pureDop = app.engine().getSettings().anubisProfile == nx::AnubisProfile::PureDoP;
         p.set ("v", "1");
+        // back to 100 % in the same turn (the slider is still enabled), then wait for the engine to adopt the DoP plan
+        p.set ("v", "1");
         app.handleRemoteCommand ("volume", p);
-        t.check (std::abs (v - 0.5) < 0.01 && pureDop && app.engine().isFixedVolume(), "NX Remote : volume à 50 %, profil Pure DoP depuis le téléphone, retour à 100 % bit-perfect"_t);
+        for (int i = 0; i < 60 && ! app.engine().isFixedVolume(); ++i) settle (100);
+        t.check (std::abs (v - 0.5) < 0.01 && pureDop && app.engine().isFixedVolume(), "NX Remote : volume à 50 %, profil Pure DoP depuis le téléphone, retour à 100 % bit-perfect"_t
+                 + " [v=" + juce::String (v) + " dop=" + juce::String ((int) pureDop) + " fixed=" + juce::String ((int) app.engine().isFixedVolume()) + " state=" + juce::String ((int) app.engine().getState()) + " vol=" + juce::String (app.getUserVolume()) + "]");
+    }
+    {
+        // Step 5: covers for the phone are always a baseline RGB JPEG of at most 600 x 600, whatever the stored format
+        auto asJpeg = [] (const juce::MemoryBlock& b) { return b.getSize() > 4 && ((const unsigned char*) b.getData())[0] == 0xff && ((const unsigned char*) b.getData())[1] == 0xd8; };
+        bool allJpeg = true;
+        for (auto& bytes : { std::make_pair (kWebp, sizeof (kWebp)), std::make_pair (kProgressiveJpeg, sizeof (kProgressiveJpeg)),
+                             std::make_pair (kCmykJpeg, sizeof (kCmykJpeg)), std::make_pair (kPng16, sizeof (kPng16)) })
+        {
+            const auto key = app.library().storeArtwork (juce::MemoryBlock (bytes.first, bytes.second), "image/png");
+            const auto jpg = app.remoteArtwork (key, 600);
+            const auto img = juce::ImageFileFormat::loadFrom (jpg.getData(), jpg.getSize());
+            allJpeg = allJpeg && asJpeg (jpg) && img.isValid() && ! img.hasAlphaChannel() && img.getWidth() == 32;
+        }
+        t.check (allJpeg, "NX Remote : WebP, JPEG progressif / CMYK et PNG 16 bits servis en JPEG RGB standard"_t);
+        juce::Image big (juce::Image::ARGB, 1400, 900, true);
+        { juce::Graphics g (big); g.fillAll (juce::Colours::orange); }
+        juce::MemoryOutputStream png;
+        juce::PNGImageFormat().writeImageToStream (big, png);
+        const auto bigKey = app.library().storeArtwork (juce::MemoryBlock (png.getData(), png.getDataSize()), "image/png");
+        const auto small = juce::ImageFileFormat::loadFrom (app.remoteArtwork (bigKey, 600).getData(), app.remoteArtwork (bigKey, 600).getSize());
+        t.check (small.isValid() && small.getWidth() == 600 && small.getHeight() == 386, "NX Remote : pochette réduite à 600 px max, proportions gardées"_t);
+        // no key at all: the cover next to the file (cover / folder / front) is found through the track id
+        const auto dir = t.tempDir.getChildFile ("remote-cover");
+        dir.createDirectory();
+        dir.getChildFile ("front.webp").replaceWithData (kWebp, sizeof (kWebp));
+        auto pcm = sinePcm (4800, 2, 16, 48000.0, 440.0, 0.3);
+        writeWav (dir.getChildFile ("t.wav"), &pcm, nullptr, 2, 48000.0, 16, 16, false);
+        nx::TrackInfo ti;
+        ti.source = "local"; ti.externalId = ti.uri = dir.getChildFile ("t.wav").getFullPathName(); ti.title = "Sans pochette"_t; ti.artist = "X"; ti.album = "Remote";
+        const auto tid = app.library().upsert (ti);
+        t.check (asJpeg (app.remoteArtwork ("track:" + juce::String (tid), 600)) && app.remoteArtwork ("inconnue.jpg", 600).getSize() == 0,
+                 "NX Remote : repli dossier (front.webp) via l'identifiant du morceau ; clé inconnue = aucune image"_t);
+        // permanent link: the token and the port are saved, a new run reuses them
+        const auto token = app.remote().getToken();
+        t.check (app.settings().get ("remoteToken").toString() == token && token.length() >= 32, "NX Remote : jeton enregistré dans les préférences"_t);
+        const auto portBefore = app.remote().getPort();
+        const auto urlBefore = app.remote().getUrl();
+        app.setRemoteEnabled (false);
+        app.setRemoteEnabled (true);
+        t.check (app.remote().getPort() == portBefore && app.remote().getUrl() == urlBefore && (int) app.settings().get ("remotePort", 0) == portBefore,
+                 "NX Remote : arrêt puis redémarrage, même port, même lien, même QR code"_t);
+        const auto oldUrl = app.remote().getUrl();
+        app.remote().regenerateToken();
+        t.check (app.settings().get ("remoteToken").toString() == app.remote().getToken() && app.remote().getUrl() != oldUrl, "NX Remote : « Nouveau code » régénère le lien et l'enregistre"_t);
+        {
+            juce::String why;
+            nx::RemoteServer fresh;
+            fresh.setToken (app.remote().getToken());
+            t.check (fresh.getToken() == app.remote().getToken() && fresh.start (portBefore, why) && fresh.getPort() > 0,
+                     "NX Remote : un serveur neuf reprend le jeton enregistré"_t);
+        }
+        const auto state2 = juce::JSON::parse (app.buildRemoteState());
+        t.check (state2.hasProperty ("family") && state2.hasProperty ("position"), "état NX Remote : famille de matériel (merging / rme / fiio)"_t);
     }
     app.setRemoteEnabled (false);
     sw.close();

@@ -17,11 +17,18 @@ RemoteServer::~RemoteServer() { stop(); }
 
 void RemoteServer::regenerateToken()
 {
-    juce::Random r (juce::Time::getHighResolutionTicks() ^ (juce::int64) juce::Time::currentTimeMillis());
+    auto& r = juce::Random::getSystemRandom();
     juce::String t;
     for (int i = 0; i < 4; ++i) t << juce::String::toHexString ((juce::int64) (juce::uint32) r.nextInt()).paddedLeft ('0', 8);
+    { std::lock_guard<std::mutex> l (lock); token = t; }
+    if (onTokenChanged) onTokenChanged();
+}
+
+void RemoteServer::setToken (const juce::String& saved)
+{
+    if (saved.length() < 16 || ! saved.containsOnly ("0123456789abcdefABCDEF")) return;
     std::lock_guard<std::mutex> l (lock);
-    token = t;
+    token = saved;
 }
 
 juce::String RemoteServer::getToken() const { std::lock_guard<std::mutex> l (lock); return token; }
@@ -53,8 +60,9 @@ bool RemoteServer::start (int port, juce::String& error)
     listener = std::make_unique<juce::StreamingSocket>();
     bool ok = false;
     if (port > 0) ok = listener->createListener (port);
-    else
+    if (! ok)
     {
+        if (port > 0) listener = std::make_unique<juce::StreamingSocket>();
         for (int p = 8765; p < 8775 && ! ok; ++p)
         {
             ok = listener->createListener (p);
@@ -96,14 +104,14 @@ void RemoteServer::run()
     }
 }
 
-void RemoteServer::send (juce::StreamingSocket& s, int status, const juce::String& mime, const void* data, size_t size)
+void RemoteServer::send (juce::StreamingSocket& s, int status, const juce::String& mime, const void* data, size_t size, const char* cacheControl)
 {
     const char* text = status == 200 ? "OK" : status == 403 ? "Forbidden" : status == 404 ? "Not Found" : "Bad Request";
     juce::String head;
     head << "HTTP/1.1 " << status << " " << text << "\r\n"
          << "Content-Type: " << mime << "\r\n"
          << "Content-Length: " << (juce::int64) size << "\r\n"
-         << "Cache-Control: no-store\r\n"
+         << "Cache-Control: " << cacheControl << "\r\n"
          << "Connection: close\r\n\r\n";
     s.write (head.toRawUTF8(), (int) head.getNumBytesAsUTF8());
     if (size > 0) s.write (data, (int) size);
@@ -204,9 +212,10 @@ void RemoteServer::handle (juce::StreamingSocket& s)
     if (path == "/api/art")
     {
         juce::String mime = "image/jpeg";
-        const auto data = getArtwork ? getArtwork (params["key"], mime) : juce::MemoryBlock();
+        const auto data = getArtwork ? getArtwork (params["key"], juce::jlimit (48, 600, params["s"].isEmpty() ? 600 : params["s"].getIntValue()), mime) : juce::MemoryBlock();
         if (data.getSize() == 0) { sendText (404, "text/plain", "no artwork"); return; }
-        send (s, 200, mime, data.getData(), data.getSize());
+        // the page puts the track / cover in v=: a new picture is a new URL, so it can be cached for good
+        send (s, 200, mime, data.getData(), data.getSize(), params["v"].isNotEmpty() ? "private, max-age=31536000, immutable" : "no-store");
         return;
     }
     sendText (404, "application/json", R"({"error":"route"})");

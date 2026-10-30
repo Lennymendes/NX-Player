@@ -13,6 +13,7 @@
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   #glow { position:fixed; inset:0; background:radial-gradient(60% 40% at 30% 10%, rgba(0,245,160,.18), transparent), radial-gradient(50% 40% at 80% 30%, rgba(0,217,245,.14), transparent); pointer-events:none; }
   main { position:relative; max-width:560px; margin:0 auto; padding:16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  @media (min-width:760px) and (orientation:portrait) { main { max-width:720px; } }
   header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
   header b { font-size:18px; } #dot { width:9px; height:9px; border-radius:50%; background:var(--dim); margin-left:auto; } #dot.on { background:var(--accent); box-shadow:0 0 10px var(--accent); }
   .logo { width:26px; height:26px; border-radius:50%; border:3px solid var(--accent); }
@@ -39,41 +40,59 @@
   .badge { font-size:11px; font-weight:700; color:var(--accent); }
   #search { width:100%; padding:11px 14px; border-radius:12px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font:inherit; margin-bottom:12px; }
   #err { display:none; color:#ffb547; }
+  .chip { display:inline-block; margin-left:8px; padding:2px 9px; border-radius:20px; border:1px solid var(--line); font-size:11px; letter-spacing:0; text-transform:none; color:var(--accent2); }
+  /* Landscape (phone on its side, tablet, desktop): cover + info on the left, controls + library on the right */
+  @media (orientation:landscape) and (min-width:640px) {
+    html, body { height:100%; overflow:hidden; }
+    main { max-width:none; height:100vh; margin:0; display:grid; grid-template-columns:minmax(240px,42%) 1fr; gap:16px; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); }
+    .left { display:flex; flex-direction:column; min-height:0; overflow-y:auto; }
+    .right { min-height:0; overflow-y:auto; padding-right:4px; }
+    #art { width:min(100%, calc(100vh - 230px)); min-width:120px; margin:0 auto; }
+    .left .card { margin-bottom:10px; }
+    h1 { margin-top:10px; }
+  }
+  @media (orientation:landscape) and (min-width:1100px) { .right #ctlgrid { display:grid; grid-template-columns:1fr 1fr; gap:14px; } .right #ctlgrid .card { margin-bottom:0; } }
 </style>
 </head>
 <body>
 <div id="glow"></div>
 <main>
-  <header><div class="logo"></div><b>NX Remote</b><span id="dot"></span></header>
-  <p id="err" class="card">Accès refusé : scannez à nouveau le QR code affiché dans NX Player.</p>
+  <div class="left">
+    <header><div class="logo"></div><b>NX Remote</b><span id="dot"></span></header>
+    <p id="err" class="card">Accès refusé : scannez à nouveau le QR code affiché dans NX Player.</p>
+    <section class="card" id="info">
+      <img id="art" alt="">
+      <h1 id="title">NX Player</h1>
+      <p class="sub" id="artist">—</p>
+      <span class="pill" id="path" style="display:none"><i></i><span></span></span>
+    </section>
+  </div>
+  <div class="right">
+    <section class="card" id="ctl">
+      <div>
+        <input type="range" id="seek" min="0" max="1000" value="0">
+        <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="tr" data-c="prev">⏮</button>
+        <button class="big" id="play" data-c="toggle">▶</button>
+        <button class="tr" data-c="next">⏭</button>
+      </div>
+    </section>
 
-  <section class="card">
-    <img id="art" alt="">
-    <h1 id="title">NX Player</h1>
-    <p class="sub" id="artist">—</p>
-    <span class="pill" id="path" style="display:none"><i></i><span></span></span>
-    <div style="margin-top:14px">
-      <input type="range" id="seek" min="0" max="1000" value="0">
-      <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
+    <div id="ctlgrid">
+      <section class="card">
+        <h2>Volume</h2>
+        <input type="range" id="vol" min="0" max="100" value="100">
+        <p class="sub" id="volinfo" style="font-size:12px">100 % = bit-perfect</p>
+      </section>
+
+      <section class="card">
+        <h2>Boucle A-B</h2>
+        <div class="row"><button data-c="loopA">A</button><button data-c="loopB">B</button><button data-c="loopClear" id="loopOff">Arrêt</button></div>
+        <p class="sub" id="loopinfo" style="text-align:center;font-size:12.5px;margin-top:8px"></p>
+      </section>
     </div>
-    <div class="row" style="margin-top:10px">
-      <button class="tr" data-c="prev">⏮</button>
-      <button class="big" id="play" data-c="toggle">▶</button>
-      <button class="tr" data-c="next">⏭</button>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Volume</h2>
-    <input type="range" id="vol" min="0" max="100" value="100">
-    <p class="sub" id="volinfo" style="font-size:12px">100 % = bit-perfect</p>
-  </section>
-
-  <section class="card">
-    <h2>Boucle A-B</h2>
-    <div class="row"><button data-c="loopA">A</button><button data-c="loopB">B</button><button data-c="loopClear" id="loopOff">Arrêt</button></div>
-    <p class="sub" id="loopinfo" style="text-align:center;font-size:12.5px;margin-top:8px"></p>
-  </section>
 
   <section class="card" id="profiles" style="display:none">
     <h2 id="device">Profils</h2>
@@ -86,11 +105,20 @@
     <div id="results"></div>
     <div class="grid" id="albums"></div>
   </section>
+  </div>
 </main>
 <script>
-const k = new URLSearchParams(location.search).get('k') || '';
+// The token lives in the link (?k=) and is kept on the phone: the bookmark / home-screen icon works without the QR code.
+let k = new URLSearchParams(location.search).get('k') || '';
+try { if (k) localStorage.setItem('nxk', k); else k = localStorage.getItem('nxk') || ''; } catch (e) {}
 const $ = id => document.getElementById(id);
-const art = key => key ? '/api/art?k=' + encodeURIComponent(k) + '&key=' + encodeURIComponent(key) : '';
+// `v` changes with the track / album / cover, so the browser never shows a stale picture
+const art = (key, size, v) => key ? '/api/art?k=' + encodeURIComponent(k) + '&key=' + encodeURIComponent(key) + '&s=' + (size || 600) + '&v=' + encodeURIComponent(v || key) : '';
+const FAMILIES = { merging: 'Merging Anubis', rme: 'RME ADI-2', fiio: 'FiiO KA17' };
+function setArt(img, key, size, v, fallback) {
+  img.onerror = () => { if (fallback && img.dataset.fb !== fallback) { img.dataset.fb = fallback; img.src = art(fallback, size, v); } else img.removeAttribute('src'); };   // nothing found: the gradient stays, no broken-image icon
+  img.dataset.fb = ''; img.src = art(key, size, v);
+}
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 let state = {}, dragging = false, volDrag = false, lastArt = null;
 
@@ -103,7 +131,7 @@ document.querySelectorAll('button[data-c]').forEach(b => b.onclick = () => cmd(b
 
 // Swipe on the player card (cover + controls): left = next track, right = previous (threshold 50 px)
 {
-  const card = $('art').closest('section');
+  for (const card of [$('info'), $('ctl')]) {
   card.style.touchAction = 'pan-y';
   let sx = null, sy = 0;
   card.addEventListener('touchstart', e => {
@@ -117,6 +145,7 @@ document.querySelectorAll('button[data-c]').forEach(b => b.onclick = () => cmd(b
     if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) cmd(dx < 0 ? 'next' : 'prev');
   }, { passive: true });
 }
+}
 
 async function poll() {
   try {
@@ -126,7 +155,8 @@ async function poll() {
     $('dot').className = 'on';
     $('title').textContent = state.title || 'NX Player';
     $('artist').textContent = state.artist ? state.artist + (state.album ? ' — ' + state.album : '') : 'Rien en lecture';
-    if (state.art !== lastArt) { lastArt = state.art; $('art').src = art(state.art); }
+    const artSig = (state.artV || '') + '|' + (state.art || '');
+    if (artSig !== lastArt) { lastArt = artSig; setArt($('art'), state.art || (state.id ? 'track:' + state.id : ''), 600, state.artV, state.id ? 'track:' + state.id : ''); }
     $('play').textContent = state.playing ? '❚❚' : '▶';
     const p = $('path');
     if (state.path) {
@@ -141,7 +171,9 @@ async function poll() {
     $('loopinfo').textContent = state.loop ? 'Boucle ' + fmt(state.loopA) + ' → ' + fmt(state.loopB) : 'Aucune boucle';
     const profs = state.profiles || [];
     $('profiles').style.display = profs.length ? 'block' : 'none';
-    $('device').textContent = state.device ? 'Profils · ' + state.device : 'Profils';
+    $('device').innerHTML = '';
+    $('device').append('Profils' + (state.device ? ' · ' + state.device : ''));
+    if (FAMILIES[state.family]) { const c = document.createElement('span'); c.className = 'chip'; c.textContent = FAMILIES[state.family]; $('device').appendChild(c); }
     const pl = $('plist');
     if (pl.dataset.sig !== JSON.stringify([profs, state.profile])) {
       pl.dataset.sig = JSON.stringify([profs, state.profile]);
@@ -169,14 +201,14 @@ async function library(q) {
   (data.albums || []).forEach(a => {
     const d = document.createElement('div'); d.className = 'alb';
     d.innerHTML = '<img loading="lazy"><b></b><span></span>';
-    d.querySelector('img').src = art(a.art); d.querySelector('b').textContent = a.title; d.querySelector('span').textContent = a.artist + (a.badge ? ' · ' + a.badge : '');
+    setArt(d.querySelector('img'), a.art, 300); d.querySelector('b').textContent = a.title; d.querySelector('span').textContent = a.artist + (a.badge ? ' · ' + a.badge : '');
     d.onclick = () => cmd('playAlbum', { artist: a.artist, album: a.title });
     $('albums').appendChild(d);
   });
   (data.tracks || []).forEach(t => {
     const d = document.createElement('div'); d.className = 'trk';
     d.innerHTML = '<img loading="lazy"><div><b></b><span></span></div><em class="badge"></em>';
-    d.querySelector('img').src = art(t.art); d.querySelector('b').textContent = t.title; d.querySelector('span').textContent = t.artist + ' — ' + t.album;
+    setArt(d.querySelector('img'), t.art, 150, t.id ? 'l' + t.id : t.art, t.id ? 'track:' + t.id : ''); d.querySelector('b').textContent = t.title; d.querySelector('span').textContent = t.artist + ' — ' + t.album;
     d.querySelector('em').textContent = t.badge || '';
     d.onclick = () => cmd('playTrack', { id: t.id });
     $('results').appendChild(d);

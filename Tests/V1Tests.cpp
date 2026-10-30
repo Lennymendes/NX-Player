@@ -410,7 +410,7 @@ NX_TEST_SECTION (501, "NX Remote (HTTP, jeton, QR code), pont AuraEngine X, syst
     juce::StringArray commands;
     server.onCommand = [&] (const juce::String& c, const juce::StringPairArray& p) { commands.add (c + (p["t"].isNotEmpty() ? "=" + p["t"] : juce::String())); };
     server.onLibraryQuery = [] (const juce::StringPairArray& p) { return juce::String (R"({"albums":[{"title":"A"}],"q":")") + p["q"] + "\"}"; };
-    server.getArtwork = [] (const juce::String& key, juce::String& mime) { mime = "image/png"; juce::MemoryBlock m; if (key == "cover") m.append ("PNGDATA", 7); return m; };
+    server.getArtwork = [] (const juce::String& key, int, juce::String& mime) { mime = "image/png"; juce::MemoryBlock m; if (key == "cover") m.append ("PNGDATA", 7); return m; };
     const bool started = server.start (0, err);
     t.check (started && server.isRunning() && server.getPort() > 0, "serveur démarré à la demande sur le port "_t + juce::String (server.getPort()));
     server.setState (R"({"title":"Night Drive","playing":true})");
@@ -430,8 +430,24 @@ NX_TEST_SECTION (501, "NX Remote (HTTP, jeton, QR code), pont AuraEngine X, syst
     const auto lib = nx::httpRequest ("GET", juce::URL (base + "/api/library?k=" + token + "&q=night"));
     const auto art = nx::httpRequest ("GET", juce::URL (base + "/api/art?k=" + token + "&key=cover"));
     t.check (lib.ok() && lib.body.contains ("\"q\":\"night\"") && art.ok() && art.body == "PNGDATA", "bibliothèque et pochettes servies"_t);
+    // cover for the phone: JPEG headers, long cache only when the URL carries a cache-buster (v=), size parameter passed on
+    int askedSize = 0;
+    server.getArtwork = [&askedSize] (const juce::String&, int size, juce::String& mime) { askedSize = size; mime = "image/jpeg"; juce::MemoryBlock m; m.append ("JPG", 3); return m; };
+    const auto artV = nx::httpRequest ("GET", juce::URL (base + "/api/art?k=" + token + "&key=x&s=300&v=12-abc"));
+    const int sizeWithS = askedSize;
+    const auto artNoV = nx::httpRequest ("GET", juce::URL (base + "/api/art?k=" + token + "&key=x"));
+    t.check (artV.ok() && sizeWithS == 300 && artNoV.ok() && askedSize == 600, "pochette : taille demandée (s=) transmise, 600 par défaut"_t);
+    server.getArtwork = [] (const juce::String& key, int, juce::String& mime) { mime = "image/png"; juce::MemoryBlock m; if (key == "cover") m.append ("PNGDATA", 7); return m; };
+    int changed = 0;
+    server.onTokenChanged = [&changed] { ++changed; };
+    nx::RemoteServer other;
+    other.setToken ("0123456789abcdef0123456789abcdef");
+    t.check (other.getToken() == "0123456789abcdef0123456789abcdef", "jeton enregistré restauré tel quel"_t);
+    other.setToken ("court");
+    t.check (other.getToken() == "0123456789abcdef0123456789abcdef", "jeton invalide (trop court) ignoré"_t);
     const auto oldToken = token;
     server.regenerateToken();
+    t.check (changed == 1, "nouveau code : l'application est prévenue (enregistrement)"_t);
     t.check (nx::httpRequest ("GET", juce::URL (base + "/api/state?k=" + oldToken)).status == 403, "nouveau code : l'ancien lien est révoqué"_t);
     t.check (server.getUrl().startsWith ("http://") && server.getUrl().contains (":" + juce::String (server.getPort()) + "/?k=" + server.getToken()), "URL du QR code : "_t + server.getUrl());
     server.stop();

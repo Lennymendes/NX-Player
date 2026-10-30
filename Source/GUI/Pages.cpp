@@ -1182,10 +1182,10 @@ namespace
                 g.drawText (m->series[0] ? "Série "_t + m->series : "Profil standard"_t, in, juce::Justification::centredLeft, true);
                 g.setFont (style::font (10.5f, true));
                 juce::StringArray caps;
-                if (m->dsd) caps.add (m->dop ? "DSD · DoP" : "DSD"); else caps.add ("PCM"); 
+                if (m->dsd) caps.add (m->dop ? "DSD, DoP" : "DSD"); else caps.add ("PCM");
                 if (m->dxd) caps.add ("DXD");
                 g.setColour (t.accent2());
-                g.drawText (caps.joinIntoString (" · "), tags, juce::Justification::centredRight, true);
+                g.drawText (caps.joinIntoString (juce::String::fromUTF8 (" \xc2\xb7 ")).replace (",", juce::String::fromUTF8 (" \xc2\xb7")), tags, juce::Justification::centredRight, true);
             }
             if (results.empty())
             {
@@ -1543,11 +1543,11 @@ void SettingsPage::buildRemote()
 {
     section ("NX Remote");
     row ("Activer NX Remote (Wi-Fi, à la demande)"_t, makeToggle (ctx.remote().isRunning(), [this] (bool v) { ctx.setRemoteEnabled (v); refresh(); }), 36,
-         "Un serveur web local démarre sur cet ordinateur : scannez le QR code avec votre téléphone (même réseau Wi-Fi). Arrêté à la fermeture de NX Player."_t);
+         "Un serveur web local démarre sur cet ordinateur : scannez le QR code une seule fois avec votre téléphone (même réseau Wi-Fi). Le lien reste identique d'une session à l'autre : gardez l'onglet ou ajoutez-le aux favoris. Réactivé automatiquement au lancement si vous l'avez laissé allumé."_t);
     if (ctx.remote().isRunning())
     {
         fullRow (makeRemotePanel (ctx).release(), RemotePanelHeight);
-        row ("Révoquer l'accès des appareils déjà connectés"_t, makeButton ("Nouveau code"_t, [this] { ctx.remote().regenerateToken(); refresh(); }));
+        row ("Régénérer le lien et le QR code (révoque les appareils déjà connectés)"_t, makeButton ("Nouveau code"_t, [this] { ctx.remote().regenerateToken(); refresh(); }));
     }
 }
 
@@ -1618,8 +1618,8 @@ void SettingsPage::layoutContent (int width)
         painted.push_back ({ rowArea.withTrimmedRight (r.control != nullptr ? controlW + 20 : 0), r });
         y += rowArea.getHeight() + 10;
     }
-    labels.setBounds (0, 0, width, y + 80);
-    setContentHeight (y + 80);
+    labels.setBounds (0, 0, width, y + 120);
+    setContentHeight (y + 120);   // bottom margin: the last block is never glued to the window edge
 }
 
 void SettingsPage::Labels::paint (juce::Graphics& g)

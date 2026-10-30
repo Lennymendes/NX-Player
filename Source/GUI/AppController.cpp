@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "AppController.h"
+#include "../Core/ImageDecode.h"
 #include <numeric>
 #include "Windows.h"
 #include "../Providers/UpnpProvider.h"
@@ -95,26 +96,16 @@ AppController::AppController (Options options)
     remoteServer = std::make_unique<RemoteServer>();
     remoteServer->onCommand = [this] (const juce::String& c, const juce::StringPairArray& p) { handleRemoteCommand (c, p); };
     remoteServer->onLibraryQuery = [this] (const juce::StringPairArray& p) { return buildRemoteLibrary (p); };
-    remoteServer->getArtwork = [this] (const juce::String& key, juce::String& mime) -> juce::MemoryBlock
+    // NX Remote identity (token + port): generated once and kept, so the QR code and the link never change by themselves.
     {
-        juce::MemoryBlock out;
-        if (key.isEmpty()) return out;
-        if (auto f = lib.getArtworkFile (key); f.existsAsFile() && f.getSize() < 8 * 1024 * 1024)
-        {
-            f.loadFileAsData (out);
-            mime = f.hasFileExtension ("png") ? "image/png" : "image/jpeg";
-            return out;
-        }
-        const auto img = artworkCache->loadNow (key, 600);
-        if (img.isValid())
-        {
-            juce::MemoryOutputStream jpg (out, false);
-            juce::JPEGImageFormat fmt;
-            fmt.setQuality (0.85f);
-            fmt.writeImageToStream (img, jpg);
-        }
+        remoteServer->setToken (appSettings.get ("remoteToken", "").toString());
+        if (appSettings.get ("remoteToken", "").toString() != remoteServer->getToken()) appSettings.set ("remoteToken", remoteServer->getToken());
+        remoteServer->onTokenChanged = [this] { appSettings.set ("remoteToken", remoteServer->getToken()); };
+    }
+    remoteServer->getArtwork = [this] (const juce::String& key, int maxSize, juce::String& mime) -> juce::MemoryBlock
+    {
         mime = "image/jpeg";
-        return out;
+        return remoteArtwork (key, maxSize);
     };
 
     // Themes
@@ -224,6 +215,7 @@ AppController::AppController (Options options)
     }
 
     lastFrame = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    if ((bool) appSettings.get ("remoteEnabled", false)) setRemoteEnabled (true);   // left on: the saved link works again at once
     startTimerHz (30);
 }
 
@@ -747,9 +739,12 @@ double AppController::getUserVolume() { return (double) appSettings.get ("volume
 
 bool AppController::setRemoteEnabled (bool on)
 {
+    appSettings.set ("remoteEnabled", on);
     if (! on) { remoteServer->stop(); return true; }
     juce::String err;
-    if (! remoteServer->start (0, err)) { showMessage (err); return false; }
+    // same port as last time when it is free (the link stays valid); otherwise a new one, saved
+    if (! remoteServer->start ((int) appSettings.get ("remotePort", 0), err)) { showMessage (err); return false; }
+    if (remoteServer->getPort() != (int) appSettings.get ("remotePort", 0)) appSettings.set ("remotePort", remoteServer->getPort());
     remoteServer->setState (buildRemoteState());
     return true;
 }
@@ -833,6 +828,46 @@ juce::String AppController::networkSourceLabel (const juce::String& source)
 }
 
 //==============================================================================
+juce::MemoryBlock AppController::remoteArtwork (const juce::String& requested, int maxSize)
+{
+    // Whatever the stored format, the phone gets a baseline 8-bit RGB JPEG of at most maxSize x maxSize.
+    auto key = requested;
+    if (key.startsWith ("track:"))
+    {
+        // no usable key: embedded tag, then cover / folder / front next to the file (same code as the library scan)
+        key = {};
+        if (auto t = lib.getTrack (requested.fromFirstOccurrenceOf (":", false, false).getLargeIntValue()))
+        {
+            if (t->artworkKey.isNotEmpty()) key = t->artworkKey;
+            else if (t->source == "local")
+            {
+                TrackInfo fresh;
+                const juce::File file (t->uri);
+                if (file.existsAsFile() && readLocalTrack (file, lib, fresh)) key = fresh.artworkKey;
+            }
+        }
+    }
+    if (key.isEmpty()) return {};
+    const auto id = key + "@" + juce::String (maxSize);
+    {
+        std::lock_guard<std::mutex> l (remoteArtLock);
+        for (auto& e : remoteArtCache) if (e.first == id) return e.second;
+    }
+    auto img = key.startsWith ("http") ? artworkCache->loadNow (key, maxSize) : imagedec::decode (lib.getArtworkFile (key));
+    if (! img.isValid()) return {};
+    if (juce::jmax (img.getWidth(), img.getHeight()) > maxSize)
+    {
+        const float f = (float) maxSize / (float) juce::jmax (img.getWidth(), img.getHeight());
+        img = img.rescaled (juce::jmax (1, juce::roundToInt ((float) img.getWidth() * f)), juce::jmax (1, juce::roundToInt ((float) img.getHeight() * f)), juce::Graphics::highResamplingQuality);
+    }
+    auto jpg = imagedec::toStandardJpeg (img);
+    if (jpg.getSize() == 0) return {};
+    std::lock_guard<std::mutex> l (remoteArtLock);
+    remoteArtCache.emplace_back (id, jpg);
+    if (remoteArtCache.size() > 120) remoteArtCache.erase (remoteArtCache.begin());
+    return jpg;
+}
+
 juce::String AppController::buildRemoteState()
 {
     auto* o = new juce::DynamicObject();
@@ -843,6 +878,8 @@ juce::String AppController::buildRemoteState()
         o->setProperty ("artist", t->displayArtist());
         o->setProperty ("album", t->album);
         o->setProperty ("art", t->artworkKey.startsWith ("http") ? juce::String() : t->artworkKey);
+        o->setProperty ("id", t->id);
+        o->setProperty ("artV", juce::String (t->id) + "-" + t->artworkKey.substring (0, 12));   // cache-buster: changes with the track / cover
         o->setProperty ("format", t->resolutionBadge());
         o->setProperty ("duration", t->duration > 0 ? t->duration : eng->getDurationSeconds());
     }

@@ -579,5 +579,7 @@
  "Mode Streamer / Gaming : interface au repos (OBS, jeu), audio inchangé": "Streamer / Gaming mode: idle interface (OBS, game), audio unchanged",
  "Mode Streamer / Gaming activé : interface au repos, audio inchangé": "Streamer / Gaming mode on: idle interface, audio unchanged",
  "Mode Streamer / Gaming désactivé": "Streamer / Gaming mode off",
- "Réduit l'actualisation de l'interface (fond animé, spectre, paroles, transitions) pour libérer le CPU / GPU pendant un jeu ou OBS. La lecture audio n'est pas modifiée.": "Lowers the interface refresh (animated background, spectrum, lyrics, transitions) to free the CPU / GPU during a game or OBS. Audio playback is not changed."
+ "Réduit l'actualisation de l'interface (fond animé, spectre, paroles, transitions) pour libérer le CPU / GPU pendant un jeu ou OBS. La lecture audio n'est pas modifiée.": "Lowers the interface refresh (animated background, spectrum, lyrics, transitions) to free the CPU / GPU during a game or OBS. Audio playback is not changed.",
+ "Un serveur web local démarre sur cet ordinateur : scannez le QR code une seule fois avec votre téléphone (même réseau Wi-Fi). Le lien reste identique d'une session à l'autre : gardez l'onglet ou ajoutez-le aux favoris. Réactivé automatiquement au lancement si vous l'avez laissé allumé.": "A local web server starts on this computer: scan the QR code once with your phone (same Wi-Fi network). The link stays the same from one session to the next: keep the tab open or bookmark it. Turned back on automatically at launch if you left it on.",
+ "Régénérer le lien et le QR code (révoque les appareils déjà connectés)": "Regenerate the link and QR code (revokes devices already connected)"
 }

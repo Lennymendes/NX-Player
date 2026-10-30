@@ -109,6 +109,8 @@ public:
     void handleRemoteCommand (const juce::String& command, const juce::StringPairArray& params);
     juce::String buildRemoteState();
     juce::String buildRemoteLibrary (const juce::StringPairArray& params);
+    /** Cover for the phone: baseline RGB JPEG, at most maxSize x maxSize; key = artwork key or "track:<id>". Empty = none. */
+    juce::MemoryBlock remoteArtwork (const juce::String& key, int maxSize);
 
     MainComponent* getMainComponent();
     MainWindow* getMainWindow() { return mainWindow.get(); }
@@ -141,6 +143,8 @@ private:
     std::unique_ptr<MediaControls> mediaControls;
     std::unique_ptr<ArtistInfoService> artistInfoService;
     std::unique_ptr<RemoteServer> remoteServer;
+    std::mutex remoteArtLock;
+    std::vector<std::pair<juce::String, juce::MemoryBlock>> remoteArtCache;
     std::shared_ptr<StudioToolsState> studio = std::make_shared<StudioToolsState>();
     std::unique_ptr<TrackAnalyzer> trackScan = std::make_unique<TrackAnalyzer>();   // outlives the windows (listeners)
     juce::String analysisPath;                     // local file of the current track
