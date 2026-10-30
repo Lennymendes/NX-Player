@@ -124,11 +124,21 @@ void SeekBar::paint (juce::Graphics& g)
     const bool over = isMouseOver() || dragging;
     const float th = over ? 6.0f : 4.0f;
     auto track = r.withSizeKeepingCentre (r.getWidth(), th);
-    g.setColour (juce::Colours::white.withAlpha (0.14f));
-    g.fillRoundedRectangle (track, th * 0.5f);
     const float frac = length > 0 ? (float) juce::jlimit (0.0, 1.0, position / length) : 0.0f;
-    g.setGradientFill (juce::ColourGradient (t.accent(), track.getX(), 0, t.accent2(), track.getRight(), 0, false));
-    g.fillRoundedRectangle (track.withWidth (track.getWidth() * frac), th * 0.5f);
+    const bool wave = waveform && analysis != nullptr;
+    if (wave)
+    {
+        painter.paint (g, r.reduced (0.0f, 1.0f), *analysis, frac, t.accent(), t.textCol().withAlpha (0.32f));
+        g.setColour (t.textCol());
+        g.fillRect (juce::Rectangle<float> (track.getX() + track.getWidth() * frac - 0.75f, r.getY(), 1.5f, r.getHeight()));   // playhead
+    }
+    else
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.14f));
+        g.fillRoundedRectangle (track, th * 0.5f);
+        g.setGradientFill (juce::ColourGradient (t.accent(), track.getX(), 0, t.accent2(), track.getRight(), 0, false));
+        g.fillRoundedRectangle (track.withWidth (track.getWidth() * frac), th * 0.5f);
+    }
 
     // A-B loop: highlighted zone and the two draggable markers
     if (length > 0 && loopA >= 0)
@@ -150,7 +160,7 @@ void SeekBar::paint (juce::Graphics& g)
         marker (xa, "A");
         if (loopB >= 0) marker (xb, "B");
     }
-    if (over && length > 0)
+    if (over && length > 0 && ! wave)
     {
         g.setColour (t.textCol());
         g.fillEllipse (juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ track.getX() + track.getWidth() * frac, track.getCentreY() }));
@@ -447,6 +457,16 @@ void AlbumGrid::paint (juce::Graphics& g)
             g.setColour (a.hasDsd ? style::qualityColour (t, PathQuality::BitPerfect) : t.accent());
             g.setFont (style::font (11.0f, true));
             g.drawText (badge, br, juce::Justification::centred);
+            bx = br.getRight() + 5.0f;
+        }
+        if (const auto chb = channelBadge (a.maxChannels); chb.isNotEmpty() && ! roundArt)
+        {
+            auto br = juce::Rectangle<float> ((float) chb.length() * 7.0f + 12.0f, 18.0f).withPosition (bx, art.getY() + 8);
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.fillRoundedRectangle (br, 6.0f);
+            g.setColour (a.maxChannels > 2 ? t.accent2() : t.textCol().withAlpha (0.85f));
+            g.setFont (style::font (11.0f, true));
+            g.drawText (chb, br, juce::Justification::centred);
             bx = br.getRight() + 5.0f;
         }
         if (a.fromNas() && libraryAlbums)
@@ -760,6 +780,9 @@ void TrackList::paint (juce::Graphics& g)
                          : tr.isDsd ? style::qualityColour (t, PathQuality::BitPerfect) : t.accent();
             style::paintBadge (g, b, badge, c);
         }
+        if (const auto chb = channelBadge (tr.channels); chb.isNotEmpty())
+            style::paintBadge (g, r.removeFromRight (40).withSizeKeepingCentre (34, 18).toFloat(), chb,
+                               tr.channels > 2 ? t.accent2() : t.textDim());
         // Offline column: download button / progress ring / "hors-ligne" mark
         if ((int) downloadButtons.size() != (int) tracks.size()) downloadButtons.assign (tracks.size(), {});
         downloadButtons[(size_t) i] = {};

@@ -3,6 +3,7 @@
 
 #include "Style.h"
 #include "Artwork.h"
+#include "Waveform.h"
 #include <map>
 #include <set>
 
@@ -72,6 +73,8 @@ public:
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
     std::function<void (double)> onSeek;
     bool showTimes = true;
+    /** Waveform mode: the track's analysis replaces the progress line (plain line while it is computed). */
+    void setWaveform (bool on, std::shared_ptr<const TrackAnalysis> a) { waveform = on; analysis = std::move (a); repaint(); }
 
     /** A-B loop markers (seconds, −1 = not set). Dragging a marker calls onLoopEdited (a, b). */
     void setLoop (double a, double b) { if (draggingMarker == 0) { loopA = a; loopB = b; repaint(); } }
@@ -85,6 +88,9 @@ private:
     double position = 0, length = 0;
     double loopA = -1.0, loopB = -1.0;
     bool dragging = false;
+    bool waveform = false;
+    std::shared_ptr<const TrackAnalysis> analysis;
+    WaveformPainter painter;
     int draggingMarker = 0;
 };
 

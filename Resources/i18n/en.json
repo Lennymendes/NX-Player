@@ -527,5 +527,16 @@
  "Profil": "Profile",
  "Paroles synchronisées": "Synced lyrics",
  "Barre de progression en forme d'onde": "Waveform progress bar",
- "Infos techniques (DSD / DXD, chemin du signal)": "Technical info (DSD / DXD, signal path)"
+ "Infos techniques (DSD / DXD, chemin du signal)": "Technical info (DSD / DXD, signal path)",
+ "Aucun morceau à lire": "No tracks to play",
+ "Forme d'onde à la place de la barre de progression": "Waveform instead of the progress bar",
+ "Le nouveau thème sera appliqué au prochain démarrage de NX Player. Redémarrer maintenant ?": "The new theme will be applied the next time NX Player starts. Restart now?",
+ "Local": "Local",
+ "Plus tard": "Later",
+ "Redémarrage automatique impossible : relancez NX Player manuellement.": "Automatic restart failed: please relaunch NX Player manually.",
+ "Redémarrer maintenant": "Restart now",
+ "Thème modifié": "Theme changed",
+ "Volume Fixe / DoP": "Fixed Volume / DoP",
+ "Volume Fixe": "Fixed Volume",
+ "Volume fixe en DoP : le flux DSD est transmis tel quel, réglez le niveau en analogique.": "Fixed volume in DoP: the DSD stream is sent untouched, set the level on the analogue side."
 }

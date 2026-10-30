@@ -49,6 +49,7 @@ struct AlbumInfo
     int year = 0, trackCount = 0;
     double maxRate = 0.0;
     int maxBits = 0;
+    int maxChannels = 0;               // from the file headers (2 = stereo, 6 = 5.1)
     bool hasDsd = false, lossy = false;
     double duration = 0.0;
     juce::int64 added = 0;

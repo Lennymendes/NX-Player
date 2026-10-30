@@ -9,6 +9,7 @@
 #pragma once
 
 #include "NowPlaying.h"
+#include "Waveform.h"
 
 namespace nx
 {
@@ -33,39 +34,22 @@ struct ImmersiveConfig
 /** Dominant colours of an image (k-means on a 48 × 48 thumbnail, saturated colours favoured). */
 std::vector<juce::Colour> extractPalette (const juce::Image& image, int count = 4);
 
-/** Peak overview of a file (bins of max |x|), computed in the background. */
-class WaveformCache : private juce::Thread
-{
-public:
-    WaveformCache();
-    ~WaveformCache() override;
-    void request (const juce::String& filePath);
-    /** Peaks 0..1 (empty while computing or for streams). */
-    std::vector<float> get (const juce::String& filePath) const;
-    static std::vector<float> compute (const juce::File& file, int bins = 600);
-    std::function<void()> onReady;   // message thread
-private:
-    void run() override;
-    mutable std::mutex lock;
-    juce::String pending, done;
-    std::vector<float> peaks;
-};
-
 class WaveformBar : public juce::Component
 {
 public:
     explicit WaveformBar (AppContext& c) : ctx (c) {}
-    void setPeaks (std::vector<float> p) { peaks = std::move (p); repaint(); }
+    void setAnalysis (std::shared_ptr<const TrackAnalysis> a) { analysis = std::move (a); repaint(); }
     void setPosition (double pos, double len) { position = pos; length = len; repaint(); }
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent& e) override { mouseDrag (e); }
     void mouseDrag (const juce::MouseEvent& e) override;
     void mouseUp (const juce::MouseEvent& e) override;
     std::function<void (double)> onSeek;
-    bool hasPeaks() const { return ! peaks.empty(); }
+    bool hasPeaks() const { return analysis != nullptr; }
 private:
     AppContext& ctx;
-    std::vector<float> peaks;
+    std::shared_ptr<const TrackAnalysis> analysis;
+    WaveformPainter painter;
     double position = 0, length = 0, dragTime = -1;
 };
 
@@ -89,7 +73,7 @@ public:
 
 private:
     void timerCallback() override;
-    void changeListenerCallback (juce::ChangeBroadcaster*) override { updatePalette(); }
+    void changeListenerCallback (juce::ChangeBroadcaster* b) override;
     void updatePalette();
     void renderField();
     void showMenu();
@@ -101,7 +85,6 @@ private:
     ArtworkView artwork;
     LyricsView lyricsView;
     WaveformBar waveform;
-    WaveformCache waveCache;
     PluginSlot overlaySlot;
     IconButton closeButton, menuButton, prevButton, playButton, nextButton;
     std::vector<juce::Colour> palette;

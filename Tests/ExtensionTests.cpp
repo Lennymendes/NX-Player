@@ -340,6 +340,12 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
     settle (300);
     t.check (app.currentTrack() != nullptr && app.currentTrack()->title.contains ("Night"), "lecture lancée depuis l'interface : "_t + (app.currentTrack() ? app.currentTrack()->title : juce::String()));
     t.check (shoot ("04_en_cours_paroles") > 60, "En cours : pochette, paroles synchronisées, chemin du signal"_t);
+    main->player.setWaveformShown (true);
+    for (int i = 0; i < 60 && app.currentAnalysis() == nullptr; ++i) settle (50);
+    shoot ("04b_barre_forme_onde");
+    t.check (app.currentAnalysis() != nullptr && (bool) app.settings().get ("playerWaveform", false),
+             "barre de lecture : forme d'onde (analyse en arrière-plan) et choix mémorisé"_t);
+    main->player.setWaveformShown (false);
 
     // Lire / Aléatoire = the whole library, not 12 tracks; the shuffle queue is topped up from the library
     app.playCollection ("local", true);

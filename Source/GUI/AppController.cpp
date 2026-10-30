@@ -622,6 +622,13 @@ void AppController::onTrackChanged()
     }
     updateSystemNowPlaying (true);
     extendShuffle();
+    {
+        // one background scan per track (cancels the previous one), read by the player bar and the immersive view
+        const auto* t = currentTrack();
+        analysisPath = t == nullptr || externalPlaying ? juce::String()
+                     : t->source == "local" ? t->externalId : lib.getOfflineCopy (*t);
+        if (analysisPath.isNotEmpty()) trackScan->request (analysisPath);
+    }
     if (auto* m = getMainComponent()) m->trackChanged();
     if (miniWindow) miniWindow->getMini().trackChanged();
     if (const auto* t = currentTrack())

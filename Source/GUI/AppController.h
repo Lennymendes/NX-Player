@@ -3,6 +3,7 @@
 #pragma once
 
 #include "AppContext.h"
+#include "Waveform.h"
 #include <random>
 #include <algorithm>
 #include "LookAndFeel.h"
@@ -59,6 +60,8 @@ public:
     ArtistInfoService& artistInfo() override   { return *artistInfoService; }
     RemoteServer& remote() override            { return *remoteServer; }
     StudioToolsState& studioTools() override   { return *studio; }
+    TrackAnalyzer& trackAnalyzer() override    { return *trackScan; }
+    std::shared_ptr<const TrackAnalysis> currentAnalysis() override { return analysisPath.isNotEmpty() ? trackScan->get (analysisPath) : nullptr; }
 
     void playTracks (const std::vector<TrackInfo>& tracks, int startIndex) override;
     void enqueue (const std::vector<TrackInfo>& tracks) override;
@@ -136,6 +139,8 @@ private:
     std::unique_ptr<ArtistInfoService> artistInfoService;
     std::unique_ptr<RemoteServer> remoteServer;
     std::shared_ptr<StudioToolsState> studio = std::make_shared<StudioToolsState>();
+    std::unique_ptr<TrackAnalyzer> trackScan = std::make_unique<TrackAnalyzer>();   // outlives the windows (listeners)
+    juce::String analysisPath;                     // local file of the current track
     SleepBlocker sleepBlocker;
     double lastRemoteState = 0.0;
     double lastNowPlayingUpdate = 0.0;

@@ -135,119 +135,6 @@ std::vector<juce::Colour> extractPalette (const juce::Image& image, int count)
 }
 
 //==============================================================================
-WaveformCache::WaveformCache() : juce::Thread ("NX waveform") {}
-WaveformCache::~WaveformCache() { stopThread (4000); }
-
-void WaveformCache::request (const juce::String& path)
-{
-    {
-        std::lock_guard<std::mutex> l (lock);
-        if (path == done || path == pending) return;
-        pending = path;
-    }
-    if (! isThreadRunning()) startThread (juce::Thread::Priority::low);
-}
-
-std::vector<float> WaveformCache::get (const juce::String& path) const
-{
-    std::lock_guard<std::mutex> l (lock);
-    return path == done ? peaks : std::vector<float>();
-}
-
-std::vector<float> WaveformCache::compute (const juce::File& file, int bins)
-{
-    std::vector<float> out;
-    juce::String err;
-    auto dec = openDecoder (file, err);
-    if (dec == nullptr) return out;
-    const auto fmt = dec->getFormat();
-    const auto total = dec->getLength();
-    if (total <= 0) return out;
-    out.assign ((size_t) bins, 0.0f);
-    const int ch = juce::jmax (1, fmt.numChannels);
-    constexpr int block = 8192;
-    juce::int64 pos = 0;
-    auto put = [&] (juce::int64 at, float v)
-    {
-        const auto b = (size_t) juce::jlimit ((juce::int64) 0, (juce::int64) bins - 1, at * bins / total);
-        out[b] = juce::jmax (out[b], v);
-    };
-    if (fmt.isDsd())
-    {
-        std::vector<uint8_t> buf ((size_t) block * (size_t) ch);
-        while (pos < total)
-        {
-            const int n = dec->readDsd (buf.data(), block);
-            if (n <= 0) break;
-            // 1-bit density over 64 bytes ≈ the analogue level
-            for (int i = 0; i + 64 <= n; i += 64)
-            {
-                int ones = 0;
-                for (int k = 0; k < 64; ++k) { auto v = buf[(size_t) (i + k) * (size_t) ch]; while (v) { ones += v & 1; v >>= 1; } }
-                put (pos + i, std::abs ((float) ones / 512.0f - 0.5f) * 2.0f);
-            }
-            pos += n;
-        }
-    }
-    else if (fmt.kind == SampleKind::PcmFloat)
-    {
-        std::vector<double> buf ((size_t) block * (size_t) ch);
-        while (pos < total)
-        {
-            const int n = dec->readDouble (buf.data(), block);
-            if (n <= 0) break;
-            for (int i = 0; i < n; i += 16)
-            {
-                float m = 0;
-                for (int c = 0; c < ch; ++c) m = juce::jmax (m, (float) std::abs (buf[(size_t) i * (size_t) ch + (size_t) c]));
-                put (pos + i, m);
-            }
-            pos += n;
-        }
-    }
-    else
-    {
-        std::vector<int32_t> buf ((size_t) block * (size_t) ch);
-        while (pos < total)
-        {
-            const int n = dec->readInt (buf.data(), block);
-            if (n <= 0) break;
-            for (int i = 0; i < n; i += 16)
-            {
-                float m = 0;
-                for (int c = 0; c < ch; ++c) m = juce::jmax (m, (float) std::abs ((double) buf[(size_t) i * (size_t) ch + (size_t) c] / 2147483648.0));
-                put (pos + i, m);
-            }
-            pos += n;
-        }
-    }
-    const float peak = *std::max_element (out.begin(), out.end());
-    if (peak > 0.0f) for (auto& v : out) v = std::sqrt (v / peak);   // perceptual: quiet passages stay visible
-    return out;
-}
-
-void WaveformCache::run()
-{
-    while (! threadShouldExit())
-    {
-        juce::String path;
-        {
-            std::lock_guard<std::mutex> l (lock);
-            path = pending;
-            pending.clear();
-        }
-        if (path.isEmpty()) return;
-        auto result = juce::File::isAbsolutePath (path) ? compute (juce::File (path)) : std::vector<float>();
-        {
-            std::lock_guard<std::mutex> l (lock);
-            done = path;
-            peaks = std::move (result);
-        }
-        if (onReady) juce::MessageManager::callAsync ([fn = onReady] { fn(); });
-    }
-}
-
-//==============================================================================
 void WaveformBar::paint (juce::Graphics& g)
 {
     const auto& t = ctx.theme();
@@ -263,7 +150,7 @@ void WaveformBar::paint (juce::Graphics& g)
         g.setColour (t.accent().withAlpha (0.14f));
         g.fillRoundedRectangle (a, r.getY(), b - a, r.getHeight(), 4.0f);
     }
-    if (peaks.empty())
+    if (analysis == nullptr)
     {
         auto bar = r.withSizeKeepingCentre (r.getWidth(), 5.0f);
         g.setColour (juce::Colours::white.withAlpha (0.18f));
@@ -272,21 +159,7 @@ void WaveformBar::paint (juce::Graphics& g)
         g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * progress), 2.5f);
     }
     else
-    {
-        const int n = juce::jmax (40, (int) (r.getWidth() / 4.0f));
-        const float w = r.getWidth() / (float) n;
-        for (int i = 0; i < n; ++i)
-        {
-            const size_t a = (size_t) i * peaks.size() / (size_t) n, b = juce::jmax (a + 1, (size_t) (i + 1) * peaks.size() / (size_t) n);
-            float v = 0;
-            for (size_t k = a; k < b && k < peaks.size(); ++k) v = juce::jmax (v, peaks[k]);
-            const float h = juce::jmax (2.0f, v * r.getHeight());
-            const float x = r.getX() + (float) i * w;
-            const bool played = (x + w * 0.5f - r.getX()) / r.getWidth() <= progress;
-            g.setColour (played ? t.textCol() : juce::Colours::white.withAlpha (0.28f));
-            g.fillRoundedRectangle (x + w * 0.18f, r.getCentreY() - h * 0.5f, w * 0.64f, h, w * 0.3f);
-        }
-    }
+        painter.paint (g, r, *analysis, progress, t.textCol(), juce::Colours::white.withAlpha (0.3f));
     g.setColour (t.textCol().withAlpha (0.75f));
     g.setFont (style::font (12.0f, true));
     g.drawText (style::formatTime (shown), times, juce::Justification::centredLeft);
@@ -324,15 +197,22 @@ ImmersiveView::ImmersiveView (AppContext& c)
     nextButton.onClick = [this] { ctx.engine().next(); };
     playButton.onClick = [this] { ctx.engine().togglePlayPause(); };
     waveform.onSeek = [this] (double s) { ctx.engine().seek (s); };
-    waveCache.onReady = [this]
-    {
-        if (const auto* t = ctx.currentTrack()) waveform.setPeaks (waveCache.get (t->source == "local" ? t->externalId : ctx.library().getOfflineCopy (*t)));
-    };
     ctx.artwork().addChangeListener (this);
+    ctx.trackAnalyzer().addChangeListener (this);
     setWantsKeyboardFocus (false);
 }
 
-ImmersiveView::~ImmersiveView() { ctx.artwork().removeChangeListener (this); }
+ImmersiveView::~ImmersiveView()
+{
+    ctx.artwork().removeChangeListener (this);
+    ctx.trackAnalyzer().removeChangeListener (this);
+}
+
+void ImmersiveView::changeListenerCallback (juce::ChangeBroadcaster* b)
+{
+    if (b == &ctx.trackAnalyzer()) { waveform.setAnalysis (ctx.currentAnalysis()); repaint(); }
+    else updatePalette();
+}
 
 void ImmersiveView::open()
 {
@@ -363,12 +243,7 @@ void ImmersiveView::trackChanged()
 {
     const auto* t = ctx.currentTrack();
     artwork.setArtwork (t != nullptr ? t->artworkKey : juce::String(), t != nullptr ? (t->album.isNotEmpty() ? t->album : t->title) : juce::String ("NX"));
-    waveform.setPeaks ({});
-    if (t != nullptr)
-    {
-        const auto path = t->source == "local" ? t->externalId : ctx.library().getOfflineCopy (*t);
-        if (path.isNotEmpty()) { waveform.setPeaks (waveCache.get (path)); waveCache.request (path); }
-    }
+    waveform.setAnalysis (ctx.currentAnalysis());   // the scan itself is requested by the controller
     updatePalette();
     repaint();
 }
@@ -573,6 +448,16 @@ void ImmersiveView::paint (juce::Graphics& g)
             g.fillEllipse (led);
             g.setColour (juce::Colours::white);
             g.drawText (label, pill.withTrimmedRight (14.0f), juce::Justification::centredLeft);
+            // channels (from the file header) + Peak / RMS / DR once the background scan is done
+            juce::String extra;
+            if (const auto* tr = ctx.currentTrack()) extra = channelBadge (tr->channels);
+            if (auto an = ctx.currentAnalysis()) extra << (extra.isNotEmpty() ? juce::String::fromUTF8 ("  \xc2\xb7  ") : juce::String()) << an->summary();
+            if (extra.isNotEmpty())
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.8f));
+                g.setFont (style::font (13.0f, true));
+                g.drawText (extra, techArea.toFloat().withLeft (pill.getRight() + 14.0f), juce::Justification::centredLeft, true);
+            }
         }
     }
     if (! metersArea.isEmpty())

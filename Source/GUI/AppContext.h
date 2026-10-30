@@ -19,6 +19,8 @@ class DownloadManager;
 class ArtistInfoService;
 class RemoteServer;
 struct StudioToolsState;
+class TrackAnalyzer;
+struct TrackAnalysis;
 
 enum class PageId { Home, Search, RecentlyAdded, Albums, AlbumDetail, Artists, ArtistDetail, Songs, Playlists, PlaylistDetail,
                     Source, NowPlaying, Settings, Marketplace, UserPlugins,
@@ -63,6 +65,10 @@ public:
     virtual ArtistInfoService& artistInfo() = 0;
     virtual RemoteServer& remote() = 0;
     virtual StudioToolsState& studioTools() = 0;
+    /** Background scan of the current track (waveform, Peak / RMS / DR); broadcasts a change when one finishes. */
+    virtual TrackAnalyzer& trackAnalyzer() = 0;
+    /** The current track's analysis (null while scanning, or for streams). */
+    virtual std::shared_ptr<const TrackAnalysis> currentAnalysis() = 0;
 
     const Theme& theme() { return themes().current(); }
 

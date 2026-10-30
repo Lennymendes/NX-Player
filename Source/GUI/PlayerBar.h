@@ -21,10 +21,11 @@ private:
     AppContext& ctx;
 };
 
-class PlayerBar : public juce::Component, private juce::Timer
+class PlayerBar : public juce::Component, private juce::Timer, private juce::ChangeListener
 {
 public:
     explicit PlayerBar (AppContext& c);
+    ~PlayerBar() override;
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -41,6 +42,8 @@ public:
 
     /** Volume slider position 0..1 (NX Remote, keyboard). */
     void setVolumeLevel (double v);
+    /** Waveform instead of the progress line (button left of the elapsed time; saved in the settings). */
+    void setWaveformShown (bool on);
     void showStudioMenu();
 
     std::function<void()> onToggleLyrics, onToggleQueue, onShowSignalPath, onOpenNowPlaying, onImmersive;
@@ -51,9 +54,10 @@ public:
 
 private:
     void timerCallback() override;
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;   // analysis finished
     AppContext& ctx;
     ArtworkView artwork;
-    IconButton shuffleButton, prevButton, playButton, nextButton, repeatButton, miniButton, volumeButton;
+    IconButton shuffleButton, prevButton, playButton, nextButton, repeatButton, miniButton, volumeButton, waveButton;
     SeekBar seek;
     LoopButton loopButton;
     double pendingLoopA = -1.0;

@@ -298,7 +298,7 @@ namespace
         return R"SQL(
         SELECT album, COALESCE(NULLIF(album_artist, ''), artist) AS a, MAX(year), COUNT(*), MAX(sample_rate), MAX(bits),
                MAX(is_dsd), MIN(lossy), SUM(duration), MAX(added), MAX(artwork), MIN(source),
-               MAX(CASE WHEN source LIKE 'upnp%' THEN source END), MAX(genre)
+               MAX(CASE WHEN source LIKE 'upnp%' THEN source END), MAX(genre), MAX(channels)
         FROM tracks)SQL";
     }
 
@@ -308,7 +308,7 @@ namespace
         a.title = s.getText (0); a.artist = s.getText (1); a.year = s.getInt (2); a.trackCount = s.getInt (3);
         a.maxRate = s.getDouble (4); a.maxBits = s.getInt (5); a.hasDsd = s.getInt (6) != 0; a.lossy = s.getInt (7) != 0;
         a.duration = s.getDouble (8); a.added = s.getInt64 (9); a.artworkKey = s.getText (10); a.source = s.getText (11);
-        a.nasSource = s.getText (12); a.genre = s.getText (13);
+        a.nasSource = s.getText (12); a.genre = s.getText (13); a.maxChannels = s.getInt (14);
         return a;
     }
 

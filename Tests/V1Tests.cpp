@@ -14,6 +14,7 @@
 #include "../Source/Providers/Http.h"
 #include "../Source/Platform/AuraBridge.h"
 #include "../Source/Platform/SystemMonitor.h"
+#include "../Source/GUI/Waveform.h"
 #include <qrcodegen.hpp>
 #include <cmath>
 #include <map>
@@ -476,4 +477,41 @@ NX_TEST_SECTION (501, "NX Remote (HTTP, jeton, QR code), pont AuraEngine X, syst
     const bool english = "Réglages"_t == "Settings" && "Bibliothèque"_t == "Library" && "Favoris"_t == "Favourites" && "Lecture bit-perfect automatique"_t != juce::String::fromUTF8 ("Lecture bit-perfect automatique");
     nx::i18n::setLanguage ("fr");
     t.check (english && "Réglages"_t == juce::String::fromUTF8 ("R\xc3\xa9glages"), "interface en anglais / en français à chaud"_t);
+}
+
+NX_TEST_SECTION (212, "Analyse de piste en arrière-plan : forme d'onde, Peak / RMS / DR, canaux (PCM et DSD)")
+{
+    const auto never = [] { return false; };
+    // 30 s of a 1 kHz sine at 0.5 (24 bits) with two 0.9 spikes in different 3 s blocks: Peak -0,9 dBFS, RMS -9,0 dBFS,
+    // DR = 20 log10 (0.9 / 0.5) = 5,1 -> DR5
+    {
+        const int rate = 44100, frames = rate * 30;
+        auto pcm = sinePcm (frames, 2, 24, rate, 1000.0, 0.5);
+        const auto spike = (int32_t) ((uint32_t) std::llround (0.9 * 8388608.0) << 8);
+        for (int at : { rate * 1, rate * 10 }) pcm[(size_t) at * 2] = pcm[(size_t) at * 2 + 1] = spike;
+        const auto f = t.tempDir.getChildFile ("analysis.wav");
+        writeWav (f, &pcm, nullptr, 2, rate, 24, 24, false);
+        auto a = nx::TrackAnalyzer::analyse (f, nx::TrackAnalyzer::numBins, never);
+        t.check (a != nullptr && (int) a->maxV.size() == nx::TrackAnalyzer::numBins && std::abs (a->peakDb - (-0.915)) < 0.05
+                     && std::abs (a->rmsDb - (-9.03)) < 0.1 && a->dr == 5 && a->channels == 2,
+                 "PCM : Peak, RMS et DR exacts ("_t + (a != nullptr ? a->summary() : juce::String ("échec"_t)) + ")");
+        bool envelope = a != nullptr;
+        for (size_t b = 2; envelope && b + 2 < a->maxV.size(); ++b)
+            envelope = a->maxV[b] > 0.45f && a->minV[b] < -0.45f && std::abs (a->rms[b] - 0.3536f) < 0.03f;
+        t.check (envelope, "enveloppe haute densité : crête min / max et RMS par point"_t);
+        t.check (nx::TrackAnalyzer::analyse (f, 1600, [] { return true; }) == nullptr, "analyse annulée proprement (changement de piste)"_t);
+    }
+    // DSD64 sine at 40 % modulation, decimated: about -1,9 dBFS peak (SACD 0 dB = 50 % -> 0 dBFS)
+    {
+        const auto f = t.tempDir.getChildFile ("analysis.dsf");
+        writeDsf (f, dsdSine (2822400.0, 2.0, 2, 1000.0, 0.4), 2, 2822400.0, true);
+        auto a = nx::TrackAnalyzer::analyse (f, 1600, never);
+        t.check (a != nullptr && std::abs (a->peakDb - (-1.94)) < 1.0 && std::abs (a->rmsDb - (-4.95)) < 0.6 && a->channels == 2,
+                 "DSD : amplitude après décimation ("_t + (a != nullptr ? a->summary() : juce::String ("échec"_t)) + ")");
+        const auto f6 = t.tempDir.getChildFile ("analysis6.dsf");
+        writeDsf (f6, dsdSine (2822400.0, 0.2, 6, 1000.0, 0.3), 6, 2822400.0, true);
+        auto a6 = nx::TrackAnalyzer::analyse (f6, 200, never);
+        t.check (a6 != nullptr && a6->channels == 6 && nx::channelBadge (a6->channels) == "6ch" && nx::channelBadge (2) == "2ch",
+                 "canaux lus dans l'en-tête DSF : 6ch (5.1) / 2ch"_t);
+    }
 }

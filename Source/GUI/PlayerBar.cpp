@@ -23,14 +23,17 @@ PlayerBar::PlayerBar (AppContext& c)
       repeatButton (style::Icon::Repeat, "Répéter"_t, c),
       miniButton (style::Icon::Mini, "Mini-lecteur"_t, c),
       volumeButton (style::Icon::Volume, "Volume (100 % = bit-perfect)"_t, c),
+      waveButton (style::Icon::Waveform, "Forme d'onde à la place de la barre de progression"_t, c),
       seek (c), loopButton (c), badge (c), pluginSlot (c, "playerbar.right", true)
 {
     artwork.cornerRadius = 8.0f;
     artwork.shadow = false;
     playButton.primary = true;
     for (auto* b : { &shuffleButton, &prevButton, &playButton, &nextButton, &repeatButton, &lyricsButton, &queueButton, &miniButton, &volumeButton,
-                     &studioButton, &immersiveButton })
+                     &studioButton, &immersiveButton, &waveButton })
         addAndMakeVisible (b);
+    waveButton.onClick = [this] { setWaveformShown (! waveButton.active); };
+    ctx.trackAnalyzer().addChangeListener (this);
     addAndMakeVisible (deviceChip);
     studioButton.onClick = [this] { showStudioMenu(); };
     immersiveButton.onClick = [this] { if (onImmersive) onImmersive(); };
@@ -96,7 +99,24 @@ PlayerBar::PlayerBar (AppContext& c)
     volume.setValue ((double) ctx.settings().get ("volume", 1.0), juce::sendNotificationSync);
 
     startTimerHz (30);
+    setWaveformShown ((bool) ctx.settings().get ("playerWaveform", false));
     trackChanged();
+}
+
+PlayerBar::~PlayerBar() { ctx.trackAnalyzer().removeChangeListener (this); }
+
+void PlayerBar::setWaveformShown (bool on)
+{
+    waveButton.active = on;
+    waveButton.repaint();
+    if ((bool) ctx.settings().get ("playerWaveform", false) != on) ctx.settings().set ("playerWaveform", on);
+    seek.setWaveform (on, ctx.currentAnalysis());
+}
+
+void PlayerBar::changeListenerCallback (juce::ChangeBroadcaster*)
+{
+    seek.setWaveform (waveButton.active, ctx.currentAnalysis());
+    repaint();   // Peak / RMS / DR line
 }
 
 void PlayerBar::paint (juce::Graphics& g)
@@ -104,6 +124,18 @@ void PlayerBar::paint (juce::Graphics& g)
     style::paintGlass (g, *this, ctx, getLocalBounds().toFloat(), ctx.theme().radius(), true);
     const auto& t = ctx.theme();
     auto r = textArea;
+    // technical line: channels (file header) + Peak / RMS / DR once the background scan is done
+    {
+        juce::String info;
+        if (const auto* tr = ctx.currentTrack()) info = channelBadge (tr->channels);
+        if (auto an = ctx.currentAnalysis()) info << (info.isNotEmpty() ? juce::String::fromUTF8 (" \xc2\xb7 ") : juce::String()) << an->summary();
+        if (info.isNotEmpty() && r.getHeight() >= 46)
+        {
+            g.setColour (t.textDim().withAlpha (0.85f));
+            g.setFont (style::font (11.0f));
+            g.drawText (info, r.removeFromBottom (13), juce::Justification::bottomLeft, true);
+        }
+    }
     g.setColour (t.textCol());
     g.setFont (style::font (14.5f, true));
     g.drawText (title, r.removeFromTop (r.getHeight() / 2), juce::Justification::bottomLeft, true);
@@ -157,7 +189,9 @@ void PlayerBar::resized()
     repeatButton.setBounds (controls.removeFromLeft (b).reduced (6));
     controls.removeFromLeft (10);
     loopButton.setBounds (controls.removeFromLeft (44));
-    seek.setBounds (center.withSizeKeepingCentre (juce::jmin (center.getWidth(), 620), center.getHeight()));
+    auto seekArea = center.withSizeKeepingCentre (juce::jmin (center.getWidth(), 646), center.getHeight());
+    waveButton.setBounds (seekArea.removeFromLeft (26).withSizeKeepingCentre (22, 22));   // left of the elapsed time
+    seek.setBounds (seekArea);
 
     // right: badge + device chip / plug-ins, then buttons / volume
     auto top = right.removeFromTop (right.getHeight() / 2);
@@ -259,6 +293,7 @@ void PlayerBar::trackChanged()
         artistText = albumText = {};
         artwork.setArtwork ({}, "NX");
     }
+    seek.setWaveform (waveButton.active, ctx.currentAnalysis());
     stateChanged();
     repaint();
 }
