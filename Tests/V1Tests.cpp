@@ -17,6 +17,9 @@
 #include "../Source/GUI/Waveform.h"
 #include "../Source/Core/ImageDecode.h"
 #include "CoverFixtures.h"
+#include "SacdFixture.h"
+#include "../Source/Audio/SacdIso.h"
+#include "../Source/Library/LibraryScanner.h"
 #include <qrcodegen.hpp>
 #include <cmath>
 #include <map>
@@ -419,6 +422,9 @@ NX_TEST_SECTION (501, "NX Remote (HTTP, jeton, QR code), pont AuraEngine X, syst
 
     const auto page = nx::httpRequest ("GET", juce::URL (base + "/"));
     t.check (page.ok() && page.body.contains ("NX Remote") && page.body.contains ("/api/state"), "web app servie (HTML embarqué)"_t);
+    t.check (page.body.contains ("classList.add('ok')") && page.body.contains (".ph img { display:block") && page.body.contains ("visibility:hidden"),
+             "pochette web : image cachée tant qu'elle n'est pas chargée (jamais d'icône cassée)"_t);
+    t.check (page.body.contains ("state.volumeFixed") && page.body.contains ("Volume Fixe / DoP"), "volume web : grisé et « Volume Fixe / DoP » en DoP"_t);
     const auto denied = nx::httpRequest ("GET", juce::URL (base + "/api/state?k=wrong"));
     t.check (denied.status == 403, "sans le jeton du QR code : 403"_t);
     const auto st = nx::httpRequest ("GET", juce::URL (base + "/api/state?k=" + token));
@@ -587,4 +593,50 @@ NX_TEST_SECTION (213, "Étape 3 : pochettes (dossier, formats rares), tri, édit
     t.check (kept.size() == 1 && kept.front().title == "Nocturnes (remaster)" && kept.front().artist == "Quatuor Ébène"_t
              && kept.front().year == 2019 && kept.front().artworkKey.isNotEmpty(),
              "un nouveau scan conserve les champs modifiés à la main (verrou)"_t);
+}
+
+//==============================================================================
+NX_TEST_SECTION (214, "Étape 6 : bibliothèque et analyse des images SACD (.iso)")
+{
+    using namespace sacdfixture;
+    const auto dir = t.tempDir.getChildFile ("sacd214");
+    dir.createDirectory();
+    const auto bytes = build ({ { 2, { { 6, "Prélude", "Soliste" }, { 5, "Fugue", "Soliste" } } }, { 6, { { 3, "Prélude 5.1", "Soliste" } } } },
+                              "Clavier", "Ensemble");
+    const auto iso = dir.getChildFile ("Clavier.iso");
+    iso.replaceWithData (bytes.data(), bytes.size());
+    dir.getChildFile ("cover.jpg").replaceWithData (kProgressiveJpeg, sizeof (kProgressiveJpeg));
+
+    nx::Library lib;
+    juce::String err;
+    lib.openInMemory (t.tempDir.getChildFile ("art214"), err);
+    const auto tracks = nx::readSacdIso (iso, lib);
+    bool fields = tracks.size() == 3;
+    if (fields)
+    {
+        const auto& a = tracks[0];
+        const auto& m = tracks[2];
+        fields = a.uri == nx::sacd::virtualUri (iso, 0, 1) && a.title == "Prélude"_t && a.artist == "Soliste" && a.albumArtist == "Ensemble"
+              && a.album == "Clavier (2ch)" && m.album == "Clavier (6ch)" && a.channels == 2 && m.channels == 6 && a.isDsd && a.sampleRate == 2822400.0
+              && nx::channelBadge (a.channels) == "2ch" && nx::channelBadge (m.channels) == "6ch" && a.trackNumber == 1 && tracks[1].trackNumber == 2
+              && std::abs (a.duration - 6.0 / 75.0) < 1e-6 && a.year == 2004 && a.artworkKey.isNotEmpty() && a.codec == "SACD";
+    }
+    t.check (fields, "ISO indexée : une piste par zone et par plage, albums « (2ch) » / « (6ch) », DSD64, durée, pochette du dossier"_t);
+
+    // the folder scanner: .iso picked up, not read again when unchanged, tracks removed with the file
+    lib.addFolder (dir);
+    nx::LibraryScanner scanner (lib);
+    scanner.scanFolderNow (dir);
+    const int first = lib.countTracks();
+    scanner.scanFolderNow (dir);
+    const auto again = lib.findTrack ("local", nx::sacd::virtualUri (iso, 1, 1));
+    t.check (first == 3 && lib.countTracks() == 3 && again.has_value() && again->channels == 6, "scanner : 3 pistes d'ISO, pas de doublon au 2e passage"_t);
+
+    // the waveform / Peak / DR analysis opens the virtual track like a .dsf
+    auto a = nx::TrackAnalyzer::analyse (juce::File (nx::sacd::virtualUri (iso, 0, 2)), 200, [] { return false; });
+    t.check (a != nullptr && a->channels == 2 && ! a->maxV.empty(), "analyse (forme d'onde, Peak, DR) d'une piste d'ISO"_t);
+
+    iso.deleteFile();
+    scanner.scanFolderNow (dir);
+    t.check (lib.countTracks() == 0, "ISO supprimée : ses pistes quittent la bibliothèque"_t);
 }

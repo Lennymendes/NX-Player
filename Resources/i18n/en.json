@@ -581,5 +581,15 @@
  "Mode Streamer / Gaming désactivé": "Streamer / Gaming mode off",
  "Réduit l'actualisation de l'interface (fond animé, spectre, paroles, transitions) pour libérer le CPU / GPU pendant un jeu ou OBS. La lecture audio n'est pas modifiée.": "Lowers the interface refresh (animated background, spectrum, lyrics, transitions) to free the CPU / GPU during a game or OBS. Audio playback is not changed.",
  "Un serveur web local démarre sur cet ordinateur : scannez le QR code une seule fois avec votre téléphone (même réseau Wi-Fi). Le lien reste identique d'une session à l'autre : gardez l'onglet ou ajoutez-le aux favoris. Réactivé automatiquement au lancement si vous l'avez laissé allumé.": "A local web server starts on this computer: scan the QR code once with your phone (same Wi-Fi network). The link stays the same from one session to the next: keep the tab open or bookmark it. Turned back on automatically at launch if you left it on.",
- "Régénérer le lien et le QR code (révoque les appareils déjà connectés)": "Regenerate the link and QR code (revokes devices already connected)"
+ "Régénérer le lien et le QR code (révoque les appareils déjà connectés)": "Regenerate the link and QR code (revokes devices already connected)",
+ "pas une image SACD (en-tête SACDMTOC absent au secteur 510)": "not a SACD image (no SACDMTOC header at sector 510)",
+ "image SACD sans zone audio lisible": "SACD image without a readable audio area",
+ "impossible d'ouvrir ": "cannot open ",
+ "SACD : zone compressée en DST, décompression non prise en charge (convertissez l'ISO en DSF / DFF non compressé)": "SACD: DST-compressed area, decompression not supported (convert the ISO to uncompressed DSF / DFF)",
+ "SACD : fréquence d'échantillonnage inconnue": "SACD: unknown sample rate",
+ "SACD : liste des pistes absente": "SACD: track list missing",
+ "SACD : piste introuvable dans l'image": "SACD: track not found in the image",
+ "SACD : chemin de piste invalide": "SACD: invalid track path",
+ "Catalogue : ": "Catalogue: ",
+ "Piste ": "Track "
 }

@@ -14,6 +14,8 @@
 #include <complex>
 #include "../Source/Engine/PlaybackEngine.h"
 #include "../Source/Output/CaptureBackend.h"
+#include "../Source/Audio/SacdIso.h"
+#include "SacdFixture.h"
 #include <cmath>
 #include <thread>
 
@@ -860,5 +862,120 @@ NX_TEST_SECTION (110, "Boucle A-B sans coupure : le DAC n'est jamais rouvert, fo
         }
         t.check (dr.cap->config.wire == nx::WireFormat::DoP && markers && after == before && dmark > 0,
                  "DoP : boucle sur des mots DoP entiers, marqueurs 0x05 / 0xFA continus, DAC jamais reconfiguré"_t);
+    }
+}
+
+//==============================================================================
+NX_TEST_SECTION (112, "Étape 6 : images SACD (.iso) : TOC, SACD Text, zones 2ch / 6ch, lecture DSD, DST")
+{
+    using namespace sacdfixture;
+    const std::vector<AreaSpec> areas { { 2, { { 10, "Nocturne n°1", "Quatuor" }, { 7, "Nocturne n°2", "Quatuor" } } },
+                                        { 6, { { 4, "Nocturne (multicanal)", "Quatuor" } } } };
+    const auto bytes = build (areas, "Nocturnes SACD", "Quatuor \xC9" "b\xE8" "ne");   // Latin-1, as many discs store it
+    const auto dir = t.tempDir.getChildFile ("sacd");
+    dir.createDirectory();
+    const auto iso = dir.getChildFile ("Nocturnes.iso");
+    iso.replaceWithData (bytes.data(), bytes.size());
+
+    nx::sacd::Disc disc;
+    juce::String err;
+    const bool ok = nx::sacd::readDisc (iso, disc, err);
+    t.check (ok && disc.areas.size() == 2 && disc.albumTitle == "Nocturnes SACD" && disc.albumArtist == "Quatuor Ébène"_t && disc.year == 2004,
+             "Master TOC (secteur 510) + SACD Text : album, artiste (Latin-1), année"_t + " " + err);
+    if (! ok || disc.areas.size() != 2) return;
+    const auto& st = disc.areas[0];
+    const auto& mc = disc.areas[1];
+    t.check (st.channels == 2 && mc.channels == 6 && st.tracks.size() == 2 && mc.tracks.size() == 1 && ! st.isDst()
+             && st.tracks[0].title == "Nocturne n°1"_t && st.tracks[1].performer == "Quatuor" && st.tracks[0].frameCount == 10
+             && std::abs (st.tracks[1].durationSeconds() - 7.0 / 75.0) < 1e-9,
+             "Area TOC 2ch / 6ch : pistes (SACDTRL1 / 2), titres et interprètes (SACDTTxt), durées"_t);
+
+    // every byte of a track, as DSF / DFF deliver them (MSB first, interleaved by byte)
+    auto decodeAll = [] (nx::AudioDecoder& d)
+    {
+        std::vector<uint8_t> out, buf ((size_t) 4096 * (size_t) d.getFormat().numChannels);
+        for (int n; (n = d.readDsd (buf.data(), 4096)) > 0;) out.insert (out.end(), buf.begin(), buf.begin() + n * d.getFormat().numChannels);
+        return out;
+    };
+    {
+        auto d = nx::openDecoder (juce::File (nx::sacd::virtualUri (iso, 0, 2)), err);
+        const bool fmt = d != nullptr && d->getFormat().isDsd() && d->getFormat().sampleRate == 2822400.0 && d->getFormat().numChannels == 2
+                      && d->getLength() == 7 * kFrameBytes && d->getFormat().codec == "SACD";
+        t.check (fmt && decodeAll (*d) == expected (0, 2, 2, 7), "piste 2 (2ch) : DSD64 brut identique, en-têtes et paquets supplémentaires retirés"_t + " " + err);
+    }
+    {
+        auto d = nx::openDecoder (juce::File (nx::sacd::virtualUri (iso, 1, 1)), err);
+        t.check (d != nullptr && d->getFormat().numChannels == 6 && decodeAll (*d) == expected (1, 1, 6, 4), "zone multicanal : 6 canaux identiques"_t);
+    }
+    {
+        // seek inside a frame of track 1, then read across frame and sector boundaries
+        juce::FileInputStream raw (iso);
+        auto d = nx::openDecoder (std::make_unique<juce::FileInputStream> (iso), nx::sacd::virtualUri (iso, 0, 1), err);
+        const auto ref = expected (0, 1, 2, 10);
+        bool same = d != nullptr;
+        for (juce::int64 pos : { (juce::int64) 0, (juce::int64) 3 * kFrameBytes + 100, (juce::int64) 9 * kFrameBytes + 4000, (juce::int64) 5 * kFrameBytes })
+        {
+            if (! same) break;
+            same = d->seek (pos) && d->getPosition() == pos;
+            std::vector<uint8_t> buf (2 * 1000);
+            const int n = d->readDsd (buf.data(), 1000);
+            const auto expectN = (int) std::min<juce::int64> (1000, 10 * kFrameBytes - pos);
+            same = same && n == expectN && std::equal (buf.begin(), buf.begin() + n * 2, ref.begin() + pos * 2);
+        }
+        t.check (same, "recherche (seek) au milieu d'une trame : octets exacts"_t);
+    }
+    {
+        // a DST area is listed but never decoded: a clear message, no crash
+        auto dst = bytes;
+        dst[(size_t) 540 * kSector + 0x15] = 0;
+        const auto f = dir.getChildFile ("dst").getChildFile ("DST.iso");
+        f.getParentDirectory().createDirectory();
+        f.replaceWithData (dst.data(), dst.size());
+        juce::String e;
+        auto d = nx::openDecoder (juce::File (nx::sacd::virtualUri (f, 0, 1)), e);
+        nx::sacd::Disc dd;
+        t.check (d == nullptr && e.contains ("DST") && nx::sacd::readDisc (f, dd, e) && dd.areas[0].isDst(), "zone DST : refusée proprement avec un message ("_t + e + ")");
+        EngineRig rig;
+        auto item = EngineRig::item (f);
+        item.uri = nx::sacd::virtualUri (f, 0, 1);
+        juce::String reported;
+        rig.engine->onError = [&reported] (const juce::String& m) { reported = m; };
+        rig.engine->setQueue ({ item }, 0, true);
+        for (int i = 0; i < 100 && reported.isEmpty(); ++i) { rig.engine->serviceMessageThread(); juce::Thread::sleep (5); }
+        t.check (reported.contains ("DST") && rig.cap->capturedDsd.empty() && rig.cap->capturedInt.empty(),
+                 "lecteur : piste DST non jouée, message d'erreur affiché, pas de plantage"_t);
+    }
+    {
+        // not a SACD image / bad paths
+        const auto junk = dir.getChildFile ("data.iso");
+        junk.replaceWithData (std::vector<uint8_t> (600 * kSector, 0).data(), 600 * kSector);
+        nx::sacd::Disc dd;
+        juce::File iso2;
+        int a = 0, tr = 0;
+        t.check (! nx::sacd::readDisc (junk, dd, err) && ! nx::sacd::parseVirtualUri ("/x/a.iso#area=3&track=1", iso2, a, tr)
+                 && nx::sacd::parseVirtualUri (nx::sacd::virtualUri (iso, 1, 12), iso2, a, tr) && iso2 == iso && a == 1 && tr == 12
+                 && nx::sacd::realFile (nx::sacd::virtualUri (iso, 0, 1)) == iso,
+                 "ISO sans SACDMTOC ignorée, chemins virtuels « album.iso#area=0&track=1 »"_t);
+    }
+
+    // through the engine, exactly like a .dsf: native DSD bytes, then DoP
+    {
+        EngineRig rig ([] (nx::CaptureBackend& c) { c.capabilities.nativeDsdRates = { 2822400.0 }; });
+        auto item = EngineRig::item (iso);
+        item.uri = nx::sacd::virtualUri (iso, 0, 2);
+        rig.engine->setQueue ({ item }, 0, true);
+        rig.runToEnd (512);
+        const auto ref = expected (0, 2, 2, 7);
+        const auto& got = rig.cap->capturedDsd;
+        t.check (rig.cap->config.wire == nx::WireFormat::NativeDsd && got.size() >= ref.size() && std::equal (ref.begin(), ref.end(), got.begin()),
+                 "moteur : piste d'ISO en DSD natif, octets identiques ("_t + juce::String ((int) got.size()) + ")");
+    }
+    {
+        EngineRig rig ([] (nx::CaptureBackend& c) { c.capabilities.sampleRates = { 44100.0, 88200.0, 176400.0 }; });
+        auto item = EngineRig::item (iso);
+        item.uri = nx::sacd::virtualUri (iso, 0, 1);
+        rig.engine->setQueue ({ item }, 0, true);
+        rig.runToEnd (512);
+        t.check (rig.cap->config.wire == nx::WireFormat::DoP && rig.cap->capturedInt.size() > 1000, "moteur : piste d'ISO en DoP 176,4 kHz"_t);
     }
 }

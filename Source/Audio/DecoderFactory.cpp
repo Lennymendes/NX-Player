@@ -6,6 +6,7 @@
 #include "RawPcmDecoder.h"
 #include "DsdDecoders.h"
 #include "AlacDecoder.h"
+#include "SacdIso.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
 namespace nx
@@ -138,6 +139,13 @@ std::unique_ptr<AudioDecoder> openDecoder (std::unique_ptr<juce::InputStream> st
 {
     if (stream == nullptr) { error = "flux introuvable"; return {}; }
 
+    // a track of a SACD image: "<file>.iso#area=0&track=3"
+    {
+        juce::File iso;
+        int area = 0, track = 0;
+        if (sacd::parseVirtualUri (hint, iso, area, track)) return sacd::openTrack (std::move (stream), area, track, error);
+    }
+
     uint8_t magic[12] {};
     stream->setPosition (0);
     stream->read (magic, 12);
@@ -171,6 +179,7 @@ std::unique_ptr<AudioDecoder> openDecoder (std::unique_ptr<juce::InputStream> st
 
 std::unique_ptr<AudioDecoder> openDecoder (const juce::File& file, juce::String& error)
 {
+    if (sacd::isVirtualUri (file.getFullPathName())) return sacd::openTrack (file.getFullPathName(), error);
     auto in = std::make_unique<juce::FileInputStream> (file);
     if (! in->openedOk()) { error = "impossible d'ouvrir " + file.getFullPathName(); return {}; }
     auto buffered = std::make_unique<juce::BufferedInputStream> (in.release(), 1 << 16, true);
@@ -180,7 +189,7 @@ std::unique_ptr<AudioDecoder> openDecoder (const juce::File& file, juce::String&
 const juce::StringArray& supportedAudioExtensions()
 {
     static const juce::StringArray exts { "wav", "wave", "bwf", "rf64", "aif", "aiff", "aifc", "flac",
-                                          "m4a", "alac", "mp4", "dsf", "dff", "mp3", "ogg" };
+                                          "m4a", "alac", "mp4", "dsf", "dff", "mp3", "ogg", "iso" };   // iso: SACD images
     return exts;
 }
 

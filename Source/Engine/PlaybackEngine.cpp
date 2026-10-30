@@ -1,5 +1,6 @@
 // NX Player — MIT License
 #include "PlaybackEngine.h"
+#include "../Audio/SacdIso.h"
 #include "../Core/AudioLog.h"
 #include "../Audio/MemoryPlayStream.h"
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -425,7 +426,13 @@ bool PlaybackEngine::openItem (int index, double startSeconds, bool flush)
     if (item.openStream)          stream = item.openStream();
     else if (streamResolver)      stream = streamResolver (item);
     bool inMemory = false;
-    if (stream == nullptr && juce::File::isAbsolutePath (item.uri))
+    if (stream == nullptr && sacd::isVirtualUri (item.uri))
+    {
+        // a SACD image track: read from the disc image (a whole .iso is far too big for Memory Play)
+        auto f = std::make_unique<juce::FileInputStream> (sacd::realFile (item.uri));
+        if (f->openedOk()) stream = std::make_unique<juce::BufferedInputStream> (f.release(), 1 << 17, true);
+    }
+    if (stream == nullptr && juce::File::isAbsolutePath (item.uri) && ! sacd::isVirtualUri (item.uri))
     {
         // Memory Play: the file is copied into RAM (in the background, playback starts at once).
         if (s.memoryPlay)
@@ -454,7 +461,7 @@ bool PlaybackEngine::openItem (int index, double startSeconds, bool flush)
     auto plan = makePlan (dec->getFormat(), c, s);
     plan.channels = juce::jmin (plan.channels, juce::jlimit (1, 8, s.maxChannels));
     plan.inMemory = inMemory;
-    plan.fileBytes = juce::File::isAbsolutePath (item.uri) ? juce::File (item.uri).getSize() : 0;
+    plan.fileBytes = sacd::isVirtualUri (item.uri) ? 0 : juce::File::isAbsolutePath (item.uri) ? juce::File (item.uri).getSize() : 0;
 
     const bool sameWire = decHavePlan && plan.sameWire (decPlan);
     if (! flush && ! sameWire) drainConverters();

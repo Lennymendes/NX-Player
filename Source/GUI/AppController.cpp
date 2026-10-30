@@ -1,6 +1,7 @@
 // NX Player — MIT License
 #include "AppController.h"
 #include "../Core/ImageDecode.h"
+#include "../Audio/SacdIso.h"
 #include <numeric>
 #include "Windows.h"
 #include "../Providers/UpnpProvider.h"
@@ -568,7 +569,9 @@ void AppController::openFiles (const juce::StringArray& paths)
     {
         juce::File f (p);
         TrackInfo t;
-        if (f.existsAsFile() && readLocalTrack (f, lib, t)) { lib.upsert (t); tracks.push_back (t); }
+        if (f.hasFileExtension ("iso"))
+            for (auto tr : readSacdIso (f, lib)) { lib.upsert (tr); tracks.push_back (tr); }
+        else if (f.existsAsFile() && readLocalTrack (f, lib, t)) { lib.upsert (t); tracks.push_back (t); }
     }
     if (! tracks.empty()) playTracks (tracks, 0);
 }
@@ -807,7 +810,7 @@ void AppController::sendToAuraEngine (const std::vector<TrackInfo>& tracks)
     juce::Array<juce::File> files;
     for (auto& t : tracks)
     {
-        if (t.source == "local" && juce::File::isAbsolutePath (t.externalId)) files.add (juce::File (t.externalId));
+        if (t.source == "local" && juce::File::isAbsolutePath (t.externalId) && ! sacd::isVirtualUri (t.externalId)) files.add (juce::File (t.externalId));
         else if (auto copy = lib.getOfflineCopy (t); copy.isNotEmpty()) files.add (juce::File (copy));
     }
     juce::String err;
@@ -887,6 +890,12 @@ juce::String AppController::buildRemoteState()
     o->setProperty ("playing", eng->getState() == PlaybackEngine::State::Playing);
     o->setProperty ("volume", getUserVolume());
     o->setProperty ("volumeLocked", eng->isVolumeLockedByProfile());
+    {
+        // same rule as the player bar: DoP is a bit-exact carrier, the volume is held at 100 %
+        const bool dop = t != nullptr && ! eng->getSignalPath().nodes.empty() && eng->getCurrentPlan().wire == WireFormat::DoP;
+        o->setProperty ("dop", dop);
+        o->setProperty ("volumeFixed", dop || eng->isFixedVolume());
+    }
     o->setProperty ("loop", eng->isLoopActive());
     o->setProperty ("loopA", eng->getLoopA());
     o->setProperty ("loopB", eng->getLoopB());

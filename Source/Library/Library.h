@@ -98,6 +98,8 @@ public:
     bool remove (const juce::String& source, const juce::String& externalId);
     int removeMissingUnder (const juce::String& folderPath, const juce::StringArray& stillPresent);
     juce::StringArray getLocalPathsInDirectory (const juce::File& dir);
+    /** Local tracks whose path starts with prefix (the tracks of one SACD image: "<file>.iso#"). */
+    juce::StringArray getLocalPathsWithPrefix (const juce::String& prefix);
     std::optional<TrackInfo> getTrack (juce::int64 id);
     std::optional<TrackInfo> findTrack (const juce::String& source, const juce::String& externalId);
     std::vector<TrackInfo> getTracks (const juce::String& orderBy = "title", int limit = 5000, const juce::String& sourceFilter = {});
@@ -199,5 +201,8 @@ private:
 
 /** Fills a TrackInfo from a local file: format from the decoder, tags, artwork (embedded or folder.jpg). */
 bool readLocalTrack (const juce::File& file, Library& library, TrackInfo& out);
+/** Every track of a SACD image (.iso): one entry per area (2ch / multichannel) and track, virtual paths
+    "<file>.iso#area=<a>&track=<n>". Empty when the file is not a SACD image. */
+std::vector<TrackInfo> readSacdIso (const juce::File& iso, Library& library);
 
 } // namespace nx

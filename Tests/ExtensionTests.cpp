@@ -694,6 +694,13 @@ NX_TEST_SECTION (301, "Interface complète hors écran (captures de chaque page)
         for (int i = 0; i < 60 && ! app.engine().isFixedVolume(); ++i) settle (100);
         t.check (std::abs (v - 0.5) < 0.01 && pureDop && app.engine().isFixedVolume(), "NX Remote : volume à 50 %, profil Pure DoP depuis le téléphone, retour à 100 % bit-perfect"_t
                  + " [v=" + juce::String (v) + " dop=" + juce::String ((int) pureDop) + " fixed=" + juce::String ((int) app.engine().isFixedVolume()) + " state=" + juce::String ((int) app.engine().getState()) + " vol=" + juce::String (app.getUserVolume()) + "]");
+        {
+            const auto st = juce::JSON::parse (app.buildRemoteState());
+            const bool dopNow = app.engine().getCurrentPlan().wire == nx::WireFormat::DoP;
+            t.check ((bool) st.getProperty ("volumeFixed", false) == app.engine().isFixedVolume() || (dopNow && (bool) st.getProperty ("volumeFixed", false)),
+                     "état NX Remote : volume fixe (DoP / bit-perfect) transmis au téléphone"_t);
+            t.check (! dopNow || (bool) st.getProperty ("dop", false), "état NX Remote : DoP signalé quand la piste passe en DoP"_t);
+        }
     }
     {
         // Step 5: covers for the phone are always a baseline RGB JPEG of at most 600 x 600, whatever the stored format

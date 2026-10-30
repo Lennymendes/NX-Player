@@ -1,6 +1,7 @@
 // NX Player — MIT License
 #include "Library.h"
 #include "../Audio/AudioDecoder.h"
+#include "../Audio/SacdIso.h"
 #include "../Core/ImageDecode.h"
 #include <juce_cryptography/juce_cryptography.h>
 
@@ -209,6 +210,16 @@ juce::StringArray Library::getLocalPathsInDirectory (const juce::File& dir)
         const auto path = s.getText (0);
         if (! path.substring (prefix.length()).containsChar (juce::File::getSeparatorChar())) out.add (path);
     }
+    return out;
+}
+
+juce::StringArray Library::getLocalPathsWithPrefix (const juce::String& prefix)
+{
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement s (db, "SELECT external_id FROM tracks WHERE source = 'local' AND substr(external_id, 1, length(?1)) = ?1");
+    s.bind (1, prefix);
+    juce::StringArray out;
+    while (s.step()) out.add (s.getText (0));
     return out;
 }
 
@@ -896,6 +907,57 @@ bool readLocalTrack (const juce::File& file, Library& library, TrackInfo& t)
     auto lrc = file.withFileExtension ("lrc");
     t.lyricsPath = lrc.existsAsFile() ? lrc.getFullPathName() : juce::String();
     return true;
+}
+
+std::vector<TrackInfo> readSacdIso (const juce::File& iso, Library& library)
+{
+    std::vector<TrackInfo> out;
+    sacd::Disc disc;
+    juce::String err;
+    if (! sacd::readDisc (iso, disc, err)) return out;
+
+    juce::String artworkKey;
+    const auto img = Library::findFolderCover (iso.getParentDirectory());
+    if (img.existsAsFile())
+    {
+        juce::MemoryBlock mb;
+        img.loadFileAsData (mb);
+        artworkKey = library.storeArtwork (mb, img.getFileExtension().containsIgnoreCase ("png") ? "image/png" : "image/jpeg");
+    }
+    const auto album = disc.albumTitle.isNotEmpty() ? disc.albumTitle : disc.discTitle.isNotEmpty() ? disc.discTitle : iso.getFileNameWithoutExtension();
+    const auto albumArtist = disc.albumArtist.isNotEmpty() ? disc.albumArtist : disc.discArtist;
+    juce::StringArray credits;
+    if (disc.publisher.isNotEmpty()) credits.add ("Label : " + disc.publisher);
+    if (disc.copyright.isNotEmpty()) credits.add ("Copyright : " + disc.copyright);
+    if (disc.catalog.isNotEmpty())   credits.add ("Catalogue : "_t + disc.catalog);
+
+    for (auto& a : disc.areas)
+        for (auto& tr : a.tracks)
+        {
+            TrackInfo t;
+            t.source = "local";
+            t.externalId = t.uri = sacd::virtualUri (iso, a.index, tr.number);
+            t.codec = a.isDst() ? "DST" : "SACD";
+            t.sampleRate = 2822400.0;
+            t.bitsPerSample = 1;
+            t.channels = a.channels;
+            t.isDsd = true;
+            t.duration = tr.durationSeconds();
+            t.fileSize = iso.getSize();
+            t.modified = iso.getLastModificationTime().toMilliseconds();
+            t.title = tr.title.isNotEmpty() ? tr.title : "Piste "_t + juce::String (tr.number);
+            t.artist = tr.performer.isNotEmpty() ? tr.performer : albumArtist;
+            t.albumArtist = albumArtist;
+            // a disc with both areas: two albums, clearly marked "(2ch)" and "(6ch)"
+            t.album = disc.areas.size() > 1 ? album + " (" + juce::String (a.channels) + "ch)" : album;
+            t.year = disc.year;
+            t.trackNumber = tr.number;
+            t.discNumber = 1;
+            t.credits = credits.joinIntoString ("\n");
+            t.artworkKey = artworkKey;
+            out.push_back (t);
+        }
+    return out;
 }
 
 } // namespace nx

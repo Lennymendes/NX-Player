@@ -1,6 +1,7 @@
 // NX Player — MIT License
 #include "LibraryScanner.h"
 #include "../Audio/AudioDecoder.h"
+#include "../Audio/SacdIso.h"
 #include <set>
 
 namespace nx
@@ -43,13 +44,24 @@ int LibraryScanner::scanDirectory (const juce::File& dir, bool recursive)
 {
     int changed = 0;
     juce::StringArray present;
-    std::vector<juce::File> toRead;
+    std::vector<juce::File> toRead, isoToRead;
 
     for (const auto& entry : juce::RangedDirectoryIterator (dir, recursive, "*", juce::File::findFiles))
     {
         if (threadShouldExit()) return changed;
         const auto f = entry.getFile();
         if (! isAudioFile (f)) continue;
+        if (f.hasFileExtension ("iso"))
+        {
+            // SACD image: its tracks are stored as "<file>.iso#area=<a>&track=<n>"
+            const auto existing = library.getLocalPathsWithPrefix (f.getFullPathName() + "#");
+            present.addArray (existing);
+            ++progress.seen;
+            const auto first = existing.isEmpty() ? std::nullopt : library.findTrack ("local", existing[0]);
+            if (! first || first->modified != f.getLastModificationTime().toMilliseconds() || first->fileSize != f.getSize())
+                isoToRead.push_back (f);
+            continue;
+        }
         present.add (f.getFullPathName());
         ++progress.seen;
         if (needsUpdate (f)) toRead.push_back (f);
@@ -70,6 +82,19 @@ int LibraryScanner::scanDirectory (const juce::File& dir, bool recursive)
             }
         }
         tx.commit();
+    }
+    for (auto& iso : isoToRead)
+    {
+        if (threadShouldExit()) break;
+        const auto tracks = readSacdIso (iso, library);   // not a SACD image (a data DVD...): nothing indexed
+        SqliteDb::Transaction tx (library.getDb());
+        juce::StringArray uris;
+        for (auto t : tracks) { library.upsert (t); uris.add (t.uri); present.add (t.uri); }
+        for (auto& old : library.getLocalPathsWithPrefix (iso.getFullPathName() + "#"))
+            if (! uris.contains (old)) { library.remove ("local", old); ++progress.removed; }
+        tx.commit();
+        changed += (int) tracks.size();
+        progress.updated += (int) tracks.size();
     }
 
     // Tracks of this directory (and below, when recursive) that disappeared.
