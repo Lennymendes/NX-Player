@@ -18,7 +18,7 @@ public:
     explicit ListingPage (AppContext& c);
     ~ListingPage() override;
     void layoutContent (int width) override;
-    void refresh() override { if (loader) loader (*this); layoutContent (getWidth() - viewport.getScrollBarThickness()); }
+    void refresh() override;
 
     std::function<void (ListingPage&)> loader;
     juce::String title, subtitle, listTitle, gridTitle;
@@ -35,6 +35,7 @@ public:
     std::function<void()> ctaAction;
     PillBar pills;                      // library filters (shown when it has pills)
     bool showPills = false;
+    bool showViewBar = false;           // card size S / M / L, grid / list toggle and sort (Home, Local)
     juce::String artistName;            // artist page: banner, photo and biography
 
     /** Artist page header (photo, banner, biography from TheAudioDB / Wikipedia). */
@@ -59,6 +60,22 @@ public:
         juce::Rectangle<int> moreButton;
     };
     ArtistHeader artistHeader { *this };
+
+    /** Album view controls, saved in the settings: albumSize (S|M|L), albumView (grid|list), albumSort. */
+    class ViewBar : public juce::Component
+    {
+    public:
+        explicit ViewBar (ListingPage& p);
+        void resized() override;
+        void sync();   // buttons from the settings
+        juce::TextButton small { "S" }, medium { "M" }, large { "L" };
+        IconButton viewToggle;
+        juce::ComboBox sort;
+    private:
+        ListingPage& page;
+    };
+    ViewBar viewBar { *this };
+    IconButton editButton;              // album page: metadata editor (pencil)
 
 private:
     std::unique_ptr<juce::Component> captionOwner;

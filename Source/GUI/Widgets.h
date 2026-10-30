@@ -149,6 +149,14 @@ public:
     std::function<void (const AlbumInfo&)> onOpen, onPlay;
     /** Right click: the selection (at least the clicked card). Default: the album menu (playlists, NAS clean-up...). */
     std::function<void (const std::vector<AlbumInfo>&)> onContextMenu;
+    /** Pencil on hover (library albums): opens the metadata editor. */
+    std::function<void (const AlbumInfo&)> onEdit;
+    /** Card width in pixels (0 = the theme's --nx-card-size) and the vertical list view. */
+    void setCardSize (float px) { cardSize = px; repaint(); }
+    void setListMode (bool on) { listMode = on; hover = -1; repaint(); }
+    bool isListMode() const noexcept { return listMode; }
+    /** Sort mode applied by setAlbums ("title" | "artist" | "added" | "format", empty = as given) for library albums. */
+    juce::String sortMode;
     int maxRows = 0;          // 0 = unlimited
     bool roundArt = false;    // artists: round medallions
     bool libraryAlbums = true;// cards are library albums (context menu, drag to a playlist, NAS badge)
@@ -165,8 +173,12 @@ private:
     AppContext& ctx;
     std::vector<AlbumInfo> albums;
     std::set<int> selected;
+    juce::Rectangle<int> editRect (int index) const;
+    void paintRow (juce::Graphics&, int index, juce::Rectangle<int> row);
     int hover = -1, anchor = -1;
-    bool dragStarted = false;
+    bool dragStarted = false, listMode = false;
+    float cardSize = 0.0f;
+    static constexpr int rowHeight = 60;
 };
 
 /** Horizontal pills (library filters: Albums | Artistes | Pistes | Genres | Ajouts récents | DXD | DSD | Hi-Res | CD). */

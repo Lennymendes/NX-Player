@@ -15,6 +15,8 @@
 #include "../Source/Platform/AuraBridge.h"
 #include "../Source/Platform/SystemMonitor.h"
 #include "../Source/GUI/Waveform.h"
+#include "../Source/Core/ImageDecode.h"
+#include "CoverFixtures.h"
 #include <qrcodegen.hpp>
 #include <cmath>
 #include <map>
@@ -514,4 +516,50 @@ NX_TEST_SECTION (212, "Analyse de piste en arrière-plan : forme d'onde, Peak / 
         t.check (a6 != nullptr && a6->channels == 6 && nx::channelBadge (a6->channels) == "6ch" && nx::channelBadge (2) == "2ch",
                  "canaux lus dans l'en-tête DSF : 6ch (5.1) / 2ch"_t);
     }
+}
+
+NX_TEST_SECTION (213, "Étape 3 : pochettes (dossier, formats rares), tri, édition d'album")
+{
+    // formats JUCE alone may refuse: progressive JPEG, CMYK JPEG, 16-bit PNG, WebP -> plain 8-bit RGB
+    struct Fx { const unsigned char* d; size_t n; const char* name; };
+    for (auto f : { Fx { kProgressiveJpeg, sizeof (kProgressiveJpeg), "JPEG progressif" }, Fx { kCmykJpeg, sizeof (kCmykJpeg), "JPEG CMJN" },
+                    Fx { kPng16, sizeof (kPng16), "PNG 16 bits" }, Fx { kWebp, sizeof (kWebp), "WebP" } })
+    {
+        const auto img = nx::imagedec::decode (f.d, f.n);
+        t.check (img.isValid() && img.getWidth() == 32 && img.getHeight() == 32, "pochette décodée : "_t + juce::String (f.name));
+    }
+    t.check (nx::imagedec::decode (kCmykJpeg, sizeof (kCmykJpeg)).getPixelAt (16, 16).getRed() > 150, "JPEG CMJN converti en RVB (rouge)"_t);
+    t.check (! nx::imagedec::toStandardJpeg (nx::imagedec::decode (kWebp, sizeof (kWebp))).isEmpty(), "WebP ré-encodé en JPEG standard"_t);
+
+    // cover next to the tracks: any case, any of the usual names; stored in the library, even for tracks indexed before
+    nx::Library lib;
+    juce::String err;
+    lib.openInMemory (t.tempDir.getChildFile ("art213"), err);
+    const auto album = t.tempDir.getChildFile ("album213");
+    album.createDirectory();
+    t.check (! nx::Library::findFolderCover (album).existsAsFile(), "dossier sans pochette"_t);
+    album.getChildFile ("FOLDER.JPG").replaceWithData (kProgressiveJpeg, sizeof (kProgressiveJpeg));
+    t.check (nx::Library::findFolderCover (album).getFileName() == "FOLDER.JPG", "Folder.jpg trouvé sans tenir compte de la casse"_t);
+    album.getChildFile ("front.webp").replaceWithData (kWebp, sizeof (kWebp));
+    t.check (nx::Library::findFolderCover (album).getFileName() == "FOLDER.JPG", "priorité cover > folder > front"_t);
+    nx::TrackInfo tr = makeTrack ("local", (album.getFullPathName() + "/01.flac"), "Quatuor", "Nocturnes", 96000, 24, false, false, "Classique");
+    tr.externalId = tr.uri = album.getFullPathName() + "/01.flac";
+    lib.upsert (tr);
+    t.check (lib.fillMissingArtwork() == 1 && lib.getAlbums ("title", 10).front().artworkKey.isNotEmpty(), "pochette du dossier appliquée à une piste déjà indexée"_t);
+
+    // sort modes
+    std::vector<nx::AlbumInfo> al (4);
+    al[0].title = "b"; al[0].artist = "Z"; al[0].added = 1; al[0].maxRate = 44100; al[0].maxBits = 16;
+    al[1].title = "a"; al[1].artist = "Y"; al[1].added = 4; al[1].maxRate = 352800; al[1].maxBits = 24;
+    al[2].title = "d"; al[2].artist = "X"; al[2].added = 3; al[2].hasDsd = true; al[2].maxRate = 2822400;
+    al[3].title = "c"; al[3].artist = "W"; al[3].added = 2; al[3].maxRate = 96000; al[3].maxBits = 24;
+    auto order = [&] (const char* mode) { auto v = al; nx::sortAlbums (v, mode); juce::String s; for (auto& a : v) s << a.title; return s; };
+    t.check (order ("title") == "abcd" && order ("artist") == "cdab" && order ("added") == "adcb" && order ("format") == "adcb",
+             "tri : titre, artiste, date d'ajout, format (DXD > DSD > Hi-Res > CD)"_t + " " + order ("format"));
+
+    // metadata editor: album, artist, year and cover, updated in the library
+    const int n = lib.updateAlbum ("Quatuor", "Nocturnes", "Nocturnes (remaster)", "Quatuor Ébène"_t, 2019, album.getChildFile ("FOLDER.JPG"));
+    const auto edited = lib.getAlbums ("title", 10);
+    t.check (n == 1 && edited.size() == 1 && edited.front().title == "Nocturnes (remaster)" && edited.front().artist == "Quatuor Ébène"_t && edited.front().year == 2019,
+             "édition d'album : nom, artiste et année mis à jour dans la bibliothèque"_t);
 }

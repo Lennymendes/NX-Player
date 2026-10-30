@@ -20,8 +20,90 @@ namespace nx
 //==============================================================================
 // ListingPage
 //==============================================================================
-ListingPage::ListingPage (AppContext& c) : ScrollPage (c), grid (c), list (c), pills (c), heroArt (c, 640)
+ListingPage::ViewBar::ViewBar (ListingPage& p)
+    : viewToggle (style::Icon::List, "Vue liste / grille"_t, p.ctx), page (p)
 {
+    for (auto* b : { &small, &medium, &large })
+    {
+        b->setClickingTogglesState (false);
+        b->setTooltip ("Taille des pochettes"_t);
+        addAndMakeVisible (b);
+    }
+    small.onClick = [this] { page.ctx.settings().set ("albumSize", "S"); page.refresh(); };
+    medium.onClick = [this] { page.ctx.settings().set ("albumSize", "M"); page.refresh(); };
+    large.onClick = [this] { page.ctx.settings().set ("albumSize", "L"); page.refresh(); };
+    addAndMakeVisible (viewToggle);
+    viewToggle.onClick = [this]
+    {
+        const bool list = page.ctx.settings().get ("albumView", "grid").toString() == "list";
+        page.ctx.settings().set ("albumView", list ? "grid" : "list");
+        page.refresh();
+    };
+    sort.addItem ("Tri par défaut"_t, 1);
+    sort.addItem ("Ordre alphabétique (titre)"_t, 2);
+    sort.addItem ("Artiste"_t, 3);
+    sort.addItem ("Date d'ajout"_t, 4);
+    sort.addItem ("Format / résolution (DXD, DSD, PCM)"_t, 5);
+    sort.setTooltip ("Trier les albums"_t);
+    addAndMakeVisible (sort);
+    sort.onChange = [this]
+    {
+        static const char* modes[] = { "", "", "title", "artist", "added", "format" };
+        page.ctx.settings().set ("albumSort", modes[juce::jlimit (1, 5, sort.getSelectedId())]);
+        page.refresh();
+    };
+}
+
+void ListingPage::ViewBar::sync()
+{
+    const auto size = page.ctx.settings().get ("albumSize", "M").toString();
+    small.setToggleState (size == "S", juce::dontSendNotification);
+    medium.setToggleState (size != "S" && size != "L", juce::dontSendNotification);
+    large.setToggleState (size == "L", juce::dontSendNotification);
+    for (auto* b : { &small, &medium, &large }) b->setColour (juce::TextButton::buttonColourId, b->getToggleState() ? page.ctx.theme().accent().withAlpha (0.35f) : juce::Colours::transparentWhite);
+    const bool list = page.ctx.settings().get ("albumView", "grid").toString() == "list";
+    viewToggle.setIcon (list ? style::Icon::GridView : style::Icon::List);
+    const auto mode = page.ctx.settings().get ("albumSort", "").toString();
+    sort.setSelectedId (mode == "title" ? 2 : mode == "artist" ? 3 : mode == "added" ? 4 : mode == "format" ? 5 : 1, juce::dontSendNotification);
+}
+
+void ListingPage::ViewBar::resized()
+{
+    auto r = getLocalBounds();
+    sort.setBounds (r.removeFromRight (190).reduced (0, 2));
+    r.removeFromRight (8);
+    viewToggle.setBounds (r.removeFromRight (32).reduced (2));
+    r.removeFromRight (8);
+    for (auto* b : { &large, &medium, &small }) { b->setBounds (r.removeFromRight (30).reduced (1, 3)); }
+}
+
+void ListingPage::refresh()
+{
+    // sort mode before the loader (setAlbums sorts), size and list view after it (the loader decides what the grid shows)
+    grid.sortMode = ctx.settings().get ("albumSort", "").toString();
+    if (loader) loader (*this);
+    const auto size = ctx.settings().get ("albumSize", "M").toString();
+    const bool albumsGrid = grid.libraryAlbums && ! grid.roundArt && showViewBar;
+    grid.setCardSize (albumsGrid ? (size == "S" ? 132.0f : size == "L" ? 236.0f : 0.0f) : 0.0f);
+    grid.setListMode (albumsGrid && ctx.settings().get ("albumView", "grid").toString() == "list");
+    if (showViewBar) viewBar.sync();
+    layoutContent (getWidth() - viewport.getScrollBarThickness());
+}
+
+ListingPage::ListingPage (AppContext& c) : ScrollPage (c), grid (c), list (c), pills (c), heroArt (c, 640),
+                                           editButton (style::Icon::Edit, "Modifier l'album (nom, artiste, année, pochette)"_t, c)
+{
+    contentComp.addChildComponent (viewBar);
+    contentComp.addChildComponent (editButton);
+    editButton.onClick = [this]
+    {
+        AlbumInfo a;
+        a.artist = heroArtist;
+        a.title = title;
+        if (! heroTracks.empty()) a.year = heroTracks.front().year;
+        actions::editAlbum (ctx, a);
+    };
+    grid.onEdit = [this] (const AlbumInfo& a) { actions::editAlbum (ctx, a); };
     contentComp.addAndMakeVisible (header);
     contentComp.addChildComponent (pills);
     contentComp.addChildComponent (artistHeader);
@@ -102,6 +184,8 @@ void ListingPage::layoutContent (int width)
     heroArt.setVisible (hero);
     playAll.setVisible (hasPlayRow());
     shuffleAll.setVisible (hasPlayRow());
+    viewBar.setVisible (showViewBar && ! hero && artistName.isEmpty());
+    editButton.setVisible (hero);
     bool remote = false;
     for (auto& t : heroTracks) remote = remote || DownloadManager::canDownload (t);
     downloadAll.setVisible (remote && playAll.isVisible());
@@ -129,11 +213,13 @@ void ListingPage::layoutContent (int width)
         playAll.setBounds (pad + art + 28, y + art - 44, 120, 38);
         shuffleAll.setBounds (pad + art + 160, y + art - 44, 130, 38);
         downloadAll.setBounds (pad + art + 302, y + art - 44, 140, 38);
+        editButton.setBounds (pad + art + (downloadAll.isVisible() ? 454 : 302), y + art - 44, 38, 38);
         y += art + 28;
     }
     else
     {
         header.setBounds (pad, y, inner, subtitle.isNotEmpty() ? 74 : 54);
+        if (viewBar.isVisible()) viewBar.setBounds (pad + inner - 430, y + 8, 430, 34);
         y += header.getHeight() + 8;
         pills.setVisible (showPills);
         if (showPills)

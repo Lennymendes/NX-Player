@@ -98,7 +98,7 @@ inline juce::String formatTime (double seconds)
 enum class Icon { Play, Pause, Next, Previous, Shuffle, Repeat, Volume, VolumeMute, Lyrics, Queue, Mini, Home, Search, Clock,
                   Album, Artist, Song, Playlist, Folder, Network, Cloud, Settings, Heart, Plus, Close, Expand, Signal, Theme, Plugin,
                   ChevronLeft, ChevronRight, SidebarToggle, Grid, Download, Trash,
-                  Phone, Studio, Fullscreen, Lock, FolderPlus, HeartOutline, Check, Globe, Waveform, ChevronDown, Library };
+                  Phone, Studio, Fullscreen, Lock, FolderPlus, HeartOutline, Check, Globe, Waveform, ChevronDown, Library, Edit, List, GridView };
 
 inline juce::Path iconPath (Icon icon)
 {
@@ -178,6 +178,10 @@ inline juce::Path iconPath (Icon icon)
         case Icon::Globe:    p.addEllipse (3.5f, 3.5f, 17, 17); p.addEllipse (8.5f, 3.5f, 7, 17); p.startNewSubPath (3.5f, 12); p.lineTo (20.5f, 12); break;
         case Icon::Waveform: for (int i = 0; i < 9; ++i) { const float h = 3.0f + 7.0f * std::abs (std::sin ((float) i * 1.3f)); p.startNewSubPath (4.0f + i * 2.0f, 12 - h); p.lineTo (4.0f + i * 2.0f, 12 + h); } break;
         case Icon::ChevronDown: p.startNewSubPath (6, 9); p.lineTo (12, 15); p.lineTo (18, 9); break;
+        case Icon::Edit:     p.startNewSubPath (4, 20); p.lineTo (5, 15.5f); p.lineTo (16, 4.5f); p.lineTo (19.5f, 8); p.lineTo (8.5f, 19); p.closeSubPath();
+                             p.startNewSubPath (14, 6.5f); p.lineTo (17.5f, 10); break;
+        case Icon::List:     for (int i = 0; i < 3; ++i) { const float y = 6.5f + i * 5.5f; p.startNewSubPath (9, y); p.lineTo (20, y); p.addEllipse (3.5f, y - 1.3f, 2.6f, 2.6f); } break;
+        case Icon::GridView: for (int i = 0; i < 4; ++i) p.addRoundedRectangle (4.0f + (i % 2) * 8.5f, 4.0f + (i / 2) * 8.5f, 7.0f, 7.0f, 1.5f); break;
         case Icon::Library:  p.addRoundedRectangle (3.5f, 4, 4, 16, 1); p.addRoundedRectangle (9.5f, 4, 4, 16, 1); p.startNewSubPath (16, 5); p.lineTo (20.5f, 19.5f); break;
     }
     return p;

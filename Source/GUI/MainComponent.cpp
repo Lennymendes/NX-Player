@@ -308,7 +308,19 @@ void MainComponent::resized()
 
     for (auto* p : std::initializer_list<juce::Component*> { &listing, &nowPlaying, &sourcePage, &marketplace }) p->setBounds (r);
     for (auto* o : std::initializer_list<juce::Component*> { &settingsWindow, &immersive, &onboarding }) o->setBounds (getLocalBounds());
-    toast.setBounds (getLocalBounds().withSizeKeepingCentre (juce::jmin (640, getWidth() - 40), 40).withY (getHeight() - playerH - margin * 2 - 52));
+    placeToast();
+}
+
+void MainComponent::placeToast()
+{
+    // Immersive view: top-left corner, so the toast never covers the waveform and controls at the bottom.
+    if (immersive.isVisible())
+    {
+        toast.setBounds (juce::Rectangle<int> (24, 18, juce::jmin (520, getWidth() / 2 - 100), 40));
+        return;
+    }
+    const int playerH = (int) ctx.theme().number ("--nx-player-height", 84.0f);
+    toast.setBounds (getLocalBounds().withSizeKeepingCentre (juce::jmin (640, getWidth() - 40), 40).withY (getHeight() - playerH - 12 * 2 - 52));
 }
 
 void MainComponent::showPage (juce::Component* page)
@@ -416,6 +428,7 @@ void MainComponent::open (const PageRequest& r)
     listing.heroArtist = {};
     listing.heroTracks.clear();
     listing.collection = {};
+    listing.showViewBar = false;
     listing.topSlot = nullptr;
     listing.ctaText = {};
     listing.ctaAction = nullptr;
@@ -446,6 +459,7 @@ void MainComponent::open (const PageRequest& r)
                 p.ctaText = n == 0 ? juce::String ("Ajouter un dossier de musique"_t) : juce::String();
                 p.ctaAction = [this] { navigate ({ PageId::Source, "local" }); };
                 p.grid.maxRows = 2;
+                p.showViewBar = n > 0;
                 p.grid.setAlbums (lib.getAlbums ("added", 48));
                 p.list.setTracks (lib.getRecentlyAdded (12));
                 p.heroTracks = p.list.getTracks();
@@ -465,6 +479,7 @@ void MainComponent::open (const PageRequest& r)
             listing.loader = [this, &lib, tab, r] (ListingPage& p)
             {
                 p.showPills = true;
+                p.showViewBar = tab != "artistes" && tab != "pistes" && ! (tab == "genres" && r.page != PageId::Genre);
                 p.pills.setPills ({ "albums", "artistes", "pistes", "genres", "recents", "dxd", "dsd", "hires", "cd" },
                                   { "Albums", "Artistes"_t, "Pistes"_t, "Genres", "Ajouts récents"_t, "DXD", "DSD", "Hi-Res", "CD" }, tab);
                 p.pills.setCounts ({ { "dxd", lib.countTracksFiltered (QualityFilter::Dxd) }, { "dsd", lib.countTracksFiltered (QualityFilter::Dsd) },

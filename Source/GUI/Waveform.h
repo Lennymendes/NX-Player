@@ -21,6 +21,7 @@ struct TrackAnalysis
     double peakDb = -200.0, rmsDb = -200.0;
     int dr = 0;                            // DR value (0 = too short / silent)
     int channels = 0;
+    juce::uint64 id = 0;                   // unique per scan (render cache key)
     /** "Peak -0,4 dBFS · RMS -15,2 dBFS · DR12" */
     juce::String summary() const;
 };
@@ -59,7 +60,8 @@ public:
                 juce::Colour played, juce::Colour rest);
 private:
     juce::Image images[2];
-    const TrackAnalysis* source = nullptr;
+    juce::uint64 sourceId = 0;
+    float gain = 1.0f;                     // display normalisation: the track Peak fills the height
     juce::Rectangle<int> pixels;
     juce::Colour colours[2];
 };

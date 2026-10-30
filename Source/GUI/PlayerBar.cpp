@@ -111,6 +111,7 @@ void PlayerBar::setWaveformShown (bool on)
     waveButton.repaint();
     if ((bool) ctx.settings().get ("playerWaveform", false) != on) ctx.settings().set ("playerWaveform", on);
     seek.setWaveform (on, ctx.currentAnalysis());
+    resized();
 }
 
 void PlayerBar::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -175,7 +176,8 @@ void PlayerBar::resized()
     auto center = r.reduced (8, 0);
 
     // center: transport row + seek bar
-    auto row = center.removeFromTop (center.getHeight() * 55 / 100);
+    // waveform mode gives the seek area more height (Audirvana style)
+    auto row = center.removeFromTop (center.getHeight() * (waveButton.active ? 44 : 55) / 100);
     const int b = row.getHeight();
     auto controls = row.withSizeKeepingCentre (b * 5 + 40 + 10 + 44, b);
     shuffleButton.setBounds (controls.removeFromLeft (b).reduced (6));

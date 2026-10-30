@@ -1,6 +1,7 @@
 // NX Player — MIT License
 #include "Artwork.h"
 #include "../Library/Library.h"
+#include "../Core/ImageDecode.h"
 #include <juce_cryptography/juce_cryptography.h>
 
 namespace nx
@@ -138,10 +139,10 @@ juce::Image ArtworkCache::loadOriginal (const juce::String& key)
             if (! juce::URL (key).readEntireBinaryStream (mb) || mb.getSize() < 64) return {};
             file.replaceWithData (mb.getData(), mb.getSize());
         }
-        return juce::ImageFileFormat::loadFrom (file);
+        return imagedec::decode (file);
     }
     const auto f = library.getArtworkFile (key);
-    return f.existsAsFile() ? juce::ImageFileFormat::loadFrom (f) : juce::Image();
+    return imagedec::decode (f);
 }
 
 juce::Image ArtworkCache::loadNow (const juce::String& key, int size)

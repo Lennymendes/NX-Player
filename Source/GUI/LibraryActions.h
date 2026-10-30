@@ -17,6 +17,9 @@ int addToPlaylist (AppContext& ctx, juce::int64 playlistId, const std::vector<ju
 void promptNewPlaylist (AppContext& ctx, std::vector<juce::int64> ids);
 juce::int64 createPlaylistWith (AppContext& ctx, const juce::String& name, const std::vector<juce::int64>& ids);
 
+/** Metadata editor (pencil): album name, artist, year and a local cover image; the library updates immediately. */
+void editAlbum (AppContext& ctx, const AlbumInfo& album);
+
 /** Right click on album cards (one or a selection). */
 void showAlbumMenu (AppContext& ctx, const std::vector<AlbumInfo>& albums, juce::Component* target);
 

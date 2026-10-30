@@ -63,7 +63,7 @@ public:
     void stateChanged();
     void themeChanged();
     void pluginsChanged();
-    void showMessage (const juce::String& text) { toast.show (text); }
+    void showMessage (const juce::String& text) { placeToast(); toast.show (text); }
     void setLyrics (const Lyrics& l, const juce::String& status) { nowPlaying.setLyrics (l, status); immersive.setLyrics (l, status); }
     void showSignalPath();
     void showRemote();
@@ -90,6 +90,7 @@ private:
     static bool isLocalPage (PageId p) noexcept;
     void rememberLocalView();
     void updateNavButtons();
+    void placeToast();
     void showPage (juce::Component* page);
     void timerCallback() override;
     void globalFocusChanged (juce::Component* focused) override;

@@ -19,7 +19,9 @@ namespace
               blockLen (juce::jmax ((juce::int64) 1, (juce::int64) (3.0 * rate))),
               blockSum ((size_t) numChannels, 0.0), blockPeak ((size_t) numChannels, 0.0), blockRms ((size_t) numChannels), blockPeaks ((size_t) numChannels)
         {
+            static std::atomic<juce::uint64> nextId { 1 };
             out = std::make_shared<TrackAnalysis>();
+            out->id = nextId++;
             out->channels = ch;
             out->minV.assign ((size_t) bins, 0.0f);
             out->maxV.assign ((size_t) bins, 0.0f);
@@ -182,6 +184,7 @@ std::shared_ptr<TrackAnalysis> TrackAnalyzer::analyse (const juce::File& file, i
     const auto fmt = dec->getFormat();
     const int ch = juce::jmax (1, fmt.numChannels);
     constexpr int block = 16384;
+    bins = juce::jlimit (16, bins, (int) (dec->getDurationSeconds() / 0.005));   // >= 5 ms per point
 
     if (fmt.isDsd())
     {
@@ -228,9 +231,13 @@ void WaveformPainter::paint (juce::Graphics& g, juce::Rectangle<float> area, con
     if (a.maxV.empty() || area.isEmpty()) return;
     const float scale = juce::jmax (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
     const auto px = juce::Rectangle<int> (juce::roundToInt (area.getWidth() * scale), juce::roundToInt (area.getHeight() * scale));
-    if (source != &a || px != pixels || colours[0] != played || colours[1] != rest)
+    if (sourceId != a.id || px != pixels || colours[0] != played || colours[1] != rest)
     {
-        source = &a;
+        sourceId = a.id;
+        // Normalise on the track Peak (a -10 dBFS master still fills the height); RMS / Peak stay in proportion.
+        float pk = 0.0f;
+        for (size_t b = 0; b < a.maxV.size(); ++b) pk = juce::jmax (pk, a.maxV[b], -a.minV[b]);
+        gain = pk > 1.0e-4f ? 0.96f / pk : 1.0f;
         pixels = px;
         colours[0] = played;
         colours[1] = rest;
@@ -241,7 +248,7 @@ void WaveformPainter::paint (juce::Graphics& g, juce::Rectangle<float> area, con
         {
             images[k] = juce::Image (juce::Image::ARGB, w, h, true);
             juce::Graphics ig (images[k]);
-            for (int x = 0; x < w; ++x)
+            for (int x = 0; x < w; ++x)   // one physical pixel per column: fine, tight vertical lines
             {
                 const size_t b0 = (size_t) x * n / (size_t) w;
                 const size_t b1 = juce::jmax (b0 + 1, (size_t) (x + 1) * n / (size_t) w);
@@ -254,11 +261,11 @@ void WaveformPainter::paint (juce::Graphics& g, juce::Rectangle<float> area, con
                 }
                 const float r = std::sqrt (r2 / (float) (b1 - b0));
                 // true peaks (min / max): faithful to the master's dynamics, silences and clipping
-                const float top = half - juce::jlimit (0.0f, 1.0f, mx) * half, bottom = half - juce::jlimit (-1.0f, 0.0f, mn) * half;
+                const float top = half - juce::jlimit (0.0f, 1.0f, mx * gain) * half, bottom = half - juce::jlimit (-1.0f, 0.0f, mn * gain) * half;
                 ig.setColour (colours[k].withMultipliedAlpha (0.45f));
                 ig.fillRect (juce::Rectangle<float> ((float) x, top, 1.0f, juce::jmax (1.0f, bottom - top)));
                 // RMS core, symmetric
-                const float rh = juce::jmin (1.0f, r) * half;
+                const float rh = juce::jmin (1.0f, r * gain) * half;
                 ig.setColour (colours[k]);
                 ig.fillRect (juce::Rectangle<float> ((float) x, half - rh, 1.0f, juce::jmax (1.0f, rh * 2.0f)));
             }

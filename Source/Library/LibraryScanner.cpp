@@ -102,8 +102,9 @@ int LibraryScanner::scanFolderNow (const juce::File& folder)
     dirTimes[folder.getFullPathName()] = folder.getLastModificationTime().toMilliseconds();
     for (const auto& e : juce::RangedDirectoryIterator (folder, true, "*", juce::File::findDirectories))
         dirTimes[e.getFile().getFullPathName()] = e.getFile().getLastModificationTime().toMilliseconds();
+    const int covers = library.fillMissingArtwork();
     progress.scanning = false;
-    if (n > 0) library.notifyChanged();
+    if (n > 0 || covers > 0) library.notifyChanged();
     return n;
 }
 
@@ -126,6 +127,7 @@ void LibraryScanner::pollFolder (const juce::File& root)
         if (it == dirTimes.end() || it->second != t)
         {
             changed += scanDirectory (d, false);
+            library.forgetCoverCheck (key);
             dirTimes[key] = t;
         }
     }
@@ -139,6 +141,7 @@ void LibraryScanner::pollFolder (const juce::File& root)
         }
         else ++it;
     }
+    changed += library.fillMissingArtwork();
     if (changed > 0) library.notifyChanged();
 }
 

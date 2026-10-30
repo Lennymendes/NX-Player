@@ -59,6 +59,15 @@ file(GLOB NX_ALAC_SOURCES CONFIGURE_DEPENDS ThirdParty/alac/*.c ThirdParty/alac/
 add_library(nx_alac STATIC ${NX_ALAC_SOURCES})
 
 # QR Code generator (Project Nayuki, MIT) — NX Remote
+# Cover-art fallback decoders: libwebp (decoder only) and stb_image
+file(GLOB NX_WEBP_SOURCES CONFIGURE_DEPENDS ThirdParty/libwebp/src/dec/*.c ThirdParty/libwebp/src/dsp/*.c ThirdParty/libwebp/src/utils/*.c)
+add_library(nx_imagedec STATIC ${NX_WEBP_SOURCES} ThirdParty/stb/stb_impl.c)
+target_include_directories(nx_imagedec PUBLIC ThirdParty/libwebp/src ThirdParty/libwebp ThirdParty/stb)
+if(MSVC)
+    target_compile_options(nx_imagedec PRIVATE /W0)
+else()
+    target_compile_options(nx_imagedec PRIVATE -w)
+endif()
 add_library(nx_qrcodegen STATIC ThirdParty/qrcodegen/qrcodegen.cpp)
 target_include_directories(nx_qrcodegen PUBLIC ThirdParty/qrcodegen)
 target_include_directories(nx_alac PUBLIC ThirdParty/alac)
@@ -203,6 +212,7 @@ endif()
 target_link_libraries(NXPlayer PRIVATE
     NXPlayerData
     nx_alac
+    nx_imagedec
     nx_qrcodegen
     ${NX_SQLITE_TARGET}
     juce::juce_core

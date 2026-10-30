@@ -315,7 +315,7 @@ void ImmersiveView::resized()
     closeButton.setBounds (getWidth() - 56, 18, 36, 36);
     menuButton.setBounds (getWidth() - 100, 18, 36, 36);
 
-    auto bottom = r.removeFromBottom (config.waveform || config.controls ? 120 : 30);
+    auto bottom = r.removeFromBottom (config.waveform ? 150 : config.controls ? 120 : 30);
     auto controls = bottom.removeFromBottom (56);
     const int b = 48;
     auto row = controls.withSizeKeepingCentre (b * 3 + 40, b);
@@ -325,7 +325,7 @@ void ImmersiveView::resized()
     row.removeFromLeft (20);
     nextButton.setBounds (row.removeFromLeft (b).reduced (6));
     waveform.setVisible (config.waveform);
-    waveform.setBounds (bottom.reduced (0, 4).withSizeKeepingCentre (juce::jmin (bottom.getWidth(), 1100), juce::jmin (64, bottom.getHeight())));
+    waveform.setBounds (bottom.reduced (0, 4).withSizeKeepingCentre (juce::jmin (bottom.getWidth(), 1100), juce::jmin (88, bottom.getHeight())));
     r.removeFromBottom (12);
 
     const bool split = config.layout == "split" && config.lyrics;

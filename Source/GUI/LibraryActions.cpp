@@ -54,6 +54,46 @@ void promptNewPlaylist (AppContext& ctx, std::vector<juce::int64> ids)
     }), true);
 }
 
+void editAlbum (AppContext& ctx, const AlbumInfo& album)
+{
+    auto* w = new juce::AlertWindow ("Modifier l'album"_t, "Les fichiers audio ne sont pas modifiés : seule la bibliothèque est mise à jour."_t, juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("album", album.title, "Album"_t);
+    w->addTextEditor ("artist", album.artist, "Artiste"_t);
+    w->addTextEditor ("year", album.year > 0 ? juce::String (album.year) : juce::String(), "Année"_t);
+    // cover: a button that opens a file chooser; the chosen file is shown on the button
+    auto cover = std::make_shared<juce::File>();
+    auto* pick = new juce::TextButton ("Choisir une pochette…"_t);
+    pick->setSize (320, 28);
+    juce::Component::SafePointer<juce::TextButton> safePick (pick);
+    pick->onClick = [cover, safePick]
+    {
+        auto chooser = std::make_shared<juce::FileChooser> ("Pochette"_t, juce::File::getSpecialLocation (juce::File::userPicturesDirectory), "*.jpg;*.jpeg;*.png;*.webp");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [chooser, cover, safePick] (const juce::FileChooser& fc)
+        {
+            if (! fc.getResult().existsAsFile()) return;
+            *cover = fc.getResult();
+            if (safePick != nullptr) safePick->setButtonText (cover->getFileName());
+        });
+    };
+    w->addCustomComponent (pick);
+    w->addButton ("Enregistrer"_t, 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Annuler"_t, 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    auto* app = &ctx;
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, app, album, cover] (int result)
+    {
+        if (result != 1) return;
+        const auto name = w->getTextEditorContents ("album").trim();
+        if (name.isEmpty()) { app->showMessage ("Le nom de l'album ne peut pas être vide"_t); return; }
+        const auto year = w->getTextEditorContents ("year").getIntValue();
+        const int n = app->library().updateAlbum (album.artist, album.title, name, w->getTextEditorContents ("artist"), year, *cover);
+        app->library().notifyChanged();
+        app->showMessage (n > 0 ? "Album mis à jour ("_t + juce::String (n) + " morceaux)"_t : juce::String ("Aucun morceau modifié"_t));
+        const auto newArtist = w->getTextEditorContents ("artist").trim();
+        if (n > 0 && (name != album.title || newArtist != album.artist))
+            app->navigate ({ PageId::AlbumDetail, newArtist.isNotEmpty() ? newArtist : album.artist, name });
+    }), true);
+}
+
 juce::PopupMenu playlistSubmenu (AppContext& ctx, std::vector<juce::int64> ids)
 {
     juce::PopupMenu m;
@@ -107,6 +147,7 @@ void showAlbumMenu (AppContext& ctx, const std::vector<AlbumInfo>& albums, juce:
     const auto& first = albums.front();
     juce::PopupMenu m;
     if (single) m.addSectionHeader (first.title + " — "_t + first.artist);
+    if (single) m.addItem ("Modifier l'album…"_t, [app, first] { editAlbum (*app, first); });
     else m.addSectionHeader (juce::String ((int) albums.size()) + " albums sélectionnés"_t);
 
     m.addItem ("Lire"_t, [app, albums] { app->playTracks (albumTracks (*app, albums), 0); });

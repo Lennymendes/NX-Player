@@ -43,6 +43,10 @@ struct TrackInfo
     juce::String displayArtist() const { return artist.isNotEmpty() ? artist : albumArtist; }
 };
 
+/** Sort modes of album lists: "title", "artist", "added", "format" (DXD > DSD > Hi-Res > CD > lossy, then rate). */
+struct AlbumInfo;
+void sortAlbums (std::vector<AlbumInfo>& albums, const juce::String& mode);
+
 struct AlbumInfo
 {
     juce::String title, artist, artworkKey, source;
@@ -160,6 +164,15 @@ public:
 
     /** Stores artwork bytes in the cache (content-addressed) and returns its key. */
     juce::String storeArtwork (const juce::MemoryBlock& image, const juce::String& mime);
+    /** cover / folder / front / albumart (.jpg .jpeg .png .webp), any case, in the album folder. Empty file when none. */
+    static juce::File findFolderCover (const juce::File& albumFolder);
+    /** Gives every local track without artwork the cover found in its folder. Returns the number of tracks updated. */
+    int fillMissingArtwork();
+    /** Edits an album in the library (tracks of (artist, album)): new name, artist, year (0 = keep) and cover file (optional).
+        Returns the number of tracks updated. The audio files and their tags are not touched. */
+    int updateAlbum (const juce::String& artist, const juce::String& album, const juce::String& newAlbum,
+                     const juce::String& newArtist, int newYear, const juce::File& coverFile);
+    void forgetCoverCheck (const juce::String& folder) { coverChecked.erase (folder); }   // scanner thread only
     juce::File getArtworkFile (const juce::String& key) const;
 
     /** Message-thread notification after scans / imports change the tables. */
@@ -179,6 +192,7 @@ private:
 
     SqliteDb db;
     juce::File artworkDir;
+    std::set<juce::String> coverChecked;                       // folders already searched for a cover (this session)
     std::shared_ptr<int> alive = std::make_shared<int> (0);   // async notifications check it
     bool hasFts = false;
 };

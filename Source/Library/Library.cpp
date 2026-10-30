@@ -1,6 +1,7 @@
 // NX Player — MIT License
 #include "Library.h"
 #include "../Audio/AudioDecoder.h"
+#include "../Core/ImageDecode.h"
 #include <juce_cryptography/juce_cryptography.h>
 
 namespace nx
@@ -24,6 +25,33 @@ juce::String AlbumInfo::badge() const
     t.sampleRate = hasDsd ? maxRate : maxRate;
     t.bitsPerSample = maxBits;
     return t.resolutionBadge();
+}
+
+namespace
+{
+    int formatRank (const AlbumInfo& a)
+    {
+        if (a.lossy) return 5;
+        if (a.hasDsd) return 2;
+        if (a.maxRate >= 352000.0) return 1;                                  // DXD
+        if (a.maxRate > 48000.0 || a.maxBits > 16) return 3;                  // Hi-Res PCM
+        return 4;                                                             // CD
+    }
+}
+
+void sortAlbums (std::vector<AlbumInfo>& v, const juce::String& mode)
+{
+    auto cmp = [] (const juce::String& a, const juce::String& b) { return a.compareNatural (b, false) < 0; };
+    if (mode == "title")
+        std::stable_sort (v.begin(), v.end(), [&] (const AlbumInfo& a, const AlbumInfo& b) { return cmp (a.title, b.title); });
+    else if (mode == "artist")
+        std::stable_sort (v.begin(), v.end(), [&] (const AlbumInfo& a, const AlbumInfo& b)
+                          { const int c = a.artist.compareNatural (b.artist, false); return c != 0 ? c < 0 : a.year < b.year; });
+    else if (mode == "added")
+        std::stable_sort (v.begin(), v.end(), [] (const AlbumInfo& a, const AlbumInfo& b) { return a.added > b.added; });
+    else if (mode == "format")
+        std::stable_sort (v.begin(), v.end(), [] (const AlbumInfo& a, const AlbumInfo& b)
+                          { const int ra = formatRank (a), rb = formatRank (b); return ra != rb ? ra < rb : a.maxRate > b.maxRate; });
 }
 
 Library::Library() = default;
@@ -709,11 +737,91 @@ juce::String Library::storeArtwork (const juce::MemoryBlock& image, const juce::
 {
     if (image.getSize() < 16) return {};
     const auto hash = juce::SHA256 (image).toHexString().substring (0, 32);
-    const auto ext = mime.containsIgnoreCase ("png") ? ".png" : ".jpg";
+    const bool standard = imagedec::isStandard (image.getData(), image.getSize());
+    const auto ext = ! standard ? ".jpg" : mime.containsIgnoreCase ("png") ? ".png" : ".jpg";
     const auto key = hash + ext;
     auto f = artworkDir.getChildFile (key);
-    if (! f.existsAsFile()) f.replaceWithData (image.getData(), image.getSize());
+    if (! f.existsAsFile())
+    {
+        if (standard) f.replaceWithData (image.getData(), image.getSize());
+        else
+        {
+            // progressive / CMYK JPEG, WebP, 16-bit PNG...: stored as a plain 8-bit RGB JPEG (player, NX Remote)
+            const auto jpg = imagedec::toStandardJpeg (imagedec::decode (image.getData(), image.getSize()));
+            if (jpg.getSize() > 0) f.replaceWithData (jpg.getData(), jpg.getSize());
+            else f.replaceWithData (image.getData(), image.getSize());      // undecodable: kept as is
+        }
+    }
     return key;
+}
+
+juce::File Library::findFolderCover (const juce::File& folder)
+{
+    // by priority: cover, folder, front, albumart, album
+    static const char* names[] = { "cover", "folder", "front", "albumart", "album" };
+    juce::File best;
+    int bestRank = 99;
+    for (const auto& e : juce::RangedDirectoryIterator (folder, false, "*", juce::File::findFiles))
+    {
+        const auto f = e.getFile();
+        const auto ext = f.getFileExtension().toLowerCase();
+        if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp") continue;
+        const auto base = f.getFileNameWithoutExtension().toLowerCase();
+        for (int i = 0; i < 5; ++i)
+            if (base == names[i] && i < bestRank) { best = f; bestRank = i; }
+    }
+    return best;
+}
+
+int Library::updateAlbum (const juce::String& artist, const juce::String& album, const juce::String& newAlbum,
+                         const juce::String& newArtist, int newYear, const juce::File& coverFile)
+{
+    if (newAlbum.trim().isEmpty()) return 0;
+    juce::String cover;
+    if (coverFile.existsAsFile())
+    {
+        juce::MemoryBlock mb;
+        if (coverFile.loadFileAsData (mb))
+            cover = storeArtwork (mb, coverFile.getFileExtension().containsIgnoreCase ("png") ? "image/png" : "image/jpeg");
+    }
+    std::lock_guard<std::recursive_mutex> l (db.getMutex());
+    SqliteStatement u (db, "UPDATE tracks SET album = ?3, album_artist = ?4, year = CASE WHEN ?5 > 0 THEN ?5 ELSE year END, "
+                           "artwork = CASE WHEN ?6 != '' THEN ?6 ELSE artwork END "
+                           "WHERE album = ?2 AND COALESCE(NULLIF(album_artist, ''), artist) = ?1");
+    u.bind (1, artist).bind (2, album).bind (3, newAlbum.trim()).bind (4, newArtist.trim()).bind (5, newYear).bind (6, cover).execute();
+    SqliteStatement c (db, "SELECT changes()");
+    return c.step() ? c.getInt (0) : 0;
+}
+
+int Library::fillMissingArtwork()
+{
+    std::vector<juce::String> todo;
+    {
+        std::lock_guard<std::recursive_mutex> l (db.getMutex());
+        SqliteStatement s (db, "SELECT external_id FROM tracks WHERE source = 'local' AND (artwork IS NULL OR artwork = '')");
+        while (s.step())
+        {
+            const auto dir = juce::File (s.getText (0)).getParentDirectory().getFullPathName();
+            if (coverChecked.insert (dir).second) todo.push_back (dir);
+        }
+    }
+    int updated = 0;
+    for (auto& d : todo)
+    {
+        const auto cover = findFolderCover (juce::File (d));
+        if (! cover.existsAsFile()) continue;
+        juce::MemoryBlock mb;
+        if (! cover.loadFileAsData (mb)) continue;
+        const auto key = storeArtwork (mb, cover.getFileExtension().containsIgnoreCase ("png") ? "image/png" : "image/jpeg");
+        if (key.isEmpty()) continue;
+        std::lock_guard<std::recursive_mutex> l (db.getMutex());
+        SqliteStatement u (db, "UPDATE tracks SET artwork = ?2 WHERE source = 'local' AND (artwork IS NULL OR artwork = '') "
+                               "AND substr(external_id, 1, length(?1)) = ?1 AND instr(substr(external_id, length(?1) + 1), '/') = 0 "
+                               "AND instr(substr(external_id, length(?1) + 1), '\\') = 0");
+        u.bind (1, d + juce::File::getSeparatorString()).bind (2, key).execute();
+        ++updated;
+    }
+    return updated;
 }
 
 juce::File Library::getArtworkFile (const juce::String& key) const
@@ -771,16 +879,12 @@ bool readLocalTrack (const juce::File& file, Library& library, TrackInfo& t)
         t.artworkKey = library.storeArtwork (tags.picture, tags.pictureMime);
     else
     {
-        for (auto name : { "cover.jpg", "folder.jpg", "front.jpg", "cover.png", "folder.png", "Cover.jpg", "Folder.jpg", "AlbumArt.jpg" })
+        const auto img = Library::findFolderCover (file.getParentDirectory());
+        if (img.existsAsFile())
         {
-            auto img = file.getParentDirectory().getChildFile (name);
-            if (img.existsAsFile())
-            {
-                juce::MemoryBlock mb;
-                img.loadFileAsData (mb);
-                t.artworkKey = library.storeArtwork (mb, img.getFileExtension().containsIgnoreCase ("png") ? "image/png" : "image/jpeg");
-                break;
-            }
+            juce::MemoryBlock mb;
+            img.loadFileAsData (mb);
+            t.artworkKey = library.storeArtwork (mb, img.getFileExtension().containsIgnoreCase ("png") ? "image/png" : "image/jpeg");
         }
     }
 

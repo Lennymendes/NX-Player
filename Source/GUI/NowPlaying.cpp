@@ -15,35 +15,37 @@ SignalPathView::SignalPathView (AppContext& c, bool comp) : ctx (c), compact (co
 
 int SignalPathView::getIdealHeight() const
 {
-    return 56 + (int) path.nodes.size() * (compact ? 50 : 54);
+    // compact: header 20 + overall 22 + 36 per stage (title and detail on two tight lines)
+    return compact ? 46 + (int) path.nodes.size() * 36 : 56 + (int) path.nodes.size() * 54;
 }
 
 void SignalPathView::paint (juce::Graphics& g)
 {
     const auto& t = ctx.theme();
-    auto r = getLocalBounds().toFloat().reduced (4.0f);
+    auto r = getLocalBounds().toFloat().reduced (compact ? 2.0f : 4.0f);
     const auto overall = style::qualityColour (t, path.overall);
 
     g.setColour (t.textDim());
-    g.setFont (style::font (11.5f, true));
-    g.drawText ("CHEMIN DU SIGNAL"_t, r.removeFromTop (18), juce::Justification::centredLeft);
+    g.setFont (style::font (compact ? 10.0f : 11.5f, true));
+    g.drawText ("CHEMIN DU SIGNAL"_t, r.removeFromTop (compact ? 14.0f : 18.0f), juce::Justification::centredLeft);
     if (path.nodes.empty())
     {
         g.setColour (t.textDim());
-        g.setFont (style::font (13.0f));
-        g.drawText ("Aucune lecture en cours"_t, r.removeFromTop (24), juce::Justification::centredLeft);
+        g.setFont (style::font (compact ? 12.0f : 13.0f));
+        g.drawText ("Aucune lecture en cours"_t, r.removeFromTop (22), juce::Justification::centredLeft);
         return;
     }
-    auto head = r.removeFromTop (28);
+    auto head = r.removeFromTop (compact ? 22.0f : 28.0f);
     g.setColour (overall);
-    g.fillEllipse (head.removeFromLeft (12).withSizeKeepingCentre (10, 10));
-    head.removeFromLeft (8);
-    g.setFont (style::font (15.0f, true));
-    g.drawText (toString (path.overall), head, juce::Justification::centredLeft);
-    r.removeFromTop (6);
+    g.fillEllipse (head.removeFromLeft (compact ? 10.0f : 12.0f).withSizeKeepingCentre (8, 8));
+    head.removeFromLeft (6);
+    g.setFont (style::font (compact ? 13.0f : 15.0f, true));
+    g.drawText (toString (path.overall), head, juce::Justification::centredLeft, true);
+    r.removeFromTop (compact ? 2.0f : 6.0f);
 
-    const float step = compact ? 50.0f : 54.0f;
-    const float x = r.getX() + 6.0f;
+    const float step = compact ? 36.0f : 54.0f;
+    const float x = r.getX() + (compact ? 4.0f : 6.0f);
+    const float ledSize = compact ? 7.0f : 10.0f;
     for (size_t i = 0; i < path.nodes.size(); ++i)
     {
         const auto& n = path.nodes[i];
@@ -51,30 +53,45 @@ void SignalPathView::paint (juce::Graphics& g)
         const auto c = style::qualityColour (t, n.quality);
         if (i + 1 < path.nodes.size())
         {
-            g.setColour (c.withAlpha (0.45f));
-            g.fillRect (x - 1.0f, row.getY() + 14.0f, 2.0f, step - 8.0f);
+            g.setColour (c.withAlpha (0.4f));
+            g.fillRect (x - 0.75f, row.getY() + (compact ? 10.0f : 14.0f), 1.5f, step - (compact ? 4.0f : 8.0f));
         }
-        // LED: glowing diode in the colour of the stage's quality
-        const auto led = juce::Rectangle<float> (10.0f, 10.0f).withCentre ({ x, row.getY() + 9.0f });
-        g.setGradientFill (juce::ColourGradient (c.withAlpha (0.55f), led.getCentreX(), led.getCentreY(), c.withAlpha (0.0f), led.getCentreX() + 11.0f, led.getCentreY(), true));
-        g.fillEllipse (led.expanded (7.0f));
+        // LED: diode in the colour of the stage's quality
+        const auto led = juce::Rectangle<float> (ledSize, ledSize).withCentre ({ x, row.getY() + (compact ? 7.0f : 9.0f) });
+        if (! compact)
+        {
+            g.setGradientFill (juce::ColourGradient (c.withAlpha (0.55f), led.getCentreX(), led.getCentreY(), c.withAlpha (0.0f), led.getCentreX() + 11.0f, led.getCentreY(), true));
+            g.fillEllipse (led.expanded (7.0f));
+        }
         g.setColour (c);
         g.fillEllipse (led);
-        g.setColour (juce::Colours::white.withAlpha (0.65f));
-        g.fillEllipse (led.reduced (3.0f).translated (-1.0f, -1.0f));
-        auto text = row.withTrimmedLeft (22.0f);
+        auto text = row.withTrimmedLeft (compact ? 16.0f : 22.0f);
+        if (compact)
+        {
+            // line 1: STAGE (dim, small caps) then the title; line 2: the detail, one tight line
+            auto line = text.removeFromTop (16);
+            g.setColour (t.textDim());
+            g.setFont (style::font (9.5f, true));
+            const auto stage = style::upper (tr (n.stage));
+            const int sw = juce::jmin (88, juce::roundToInt (style::textWidth (style::font (9.5f, true), stage)) + 8);
+            g.drawText (stage, line.removeFromLeft ((float) sw), juce::Justification::centredLeft, true);
+            g.setColour (t.textCol());
+            g.setFont (style::font (12.0f, true));
+            g.drawText (n.title, line, juce::Justification::centredLeft, true);
+            g.setColour (t.textDim());
+            g.setFont (style::font (10.5f));
+            g.drawText (n.detail, text.removeFromTop (14), juce::Justification::centredLeft, true);
+            continue;
+        }
         g.setColour (t.textDim());
         g.setFont (style::font (11.0f, true));
         g.drawText (style::upper (tr (n.stage)), text.removeFromTop (14), juce::Justification::centredLeft);
         g.setColour (t.textCol());
         g.setFont (style::font (13.5f, true));
         g.drawText (n.title, text.removeFromTop (17), juce::Justification::centredLeft, true);
-        if (! compact || n.detail.length() < 48)
-        {
-            g.setColour (t.textDim());
-            g.setFont (style::font (12.0f));
-            g.drawText (n.detail, text.removeFromTop (16), juce::Justification::centredLeft, true);
-        }
+        g.setColour (t.textDim());
+        g.setFont (style::font (12.0f));
+        g.drawText (n.detail, text.removeFromTop (16), juce::Justification::centredLeft, true);
     }
 }
 
@@ -239,7 +256,7 @@ void NowPlayingPage::resized()
     r.removeFromLeft (40);
 
     // left: artwork, title block, signal path
-    const int pathH = juce::jmin (signalPath.getIdealHeight(), 300);
+    const int pathH = juce::jmin (signalPath.getIdealHeight(), juce::jmax (120, r.getHeight() * 45 / 100));
     const int art = juce::jmax (140, juce::jmin (left.getWidth(), left.getHeight() - 84 - pathH - 16));
     artwork.setBounds (left.removeFromTop (art).withSizeKeepingCentre (art, art));
     left.removeFromTop (10);

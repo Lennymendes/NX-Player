@@ -279,7 +279,12 @@ void PluginSlot::paint (juce::Graphics& g)
 AlbumGrid::AlbumGrid (AppContext& c) : ctx (c) { ctx.artwork().addChangeListener (this); }
 AlbumGrid::~AlbumGrid() { ctx.artwork().removeChangeListener (this); }
 
-void AlbumGrid::setAlbums (std::vector<AlbumInfo> a) { albums = std::move (a); hover = -1; anchor = -1; selected.clear(); repaint(); }
+void AlbumGrid::setAlbums (std::vector<AlbumInfo> a)
+{
+    albums = std::move (a);
+    if (libraryAlbums && ! roundArt && sortMode.isNotEmpty()) sortAlbums (albums, sortMode);
+    hover = -1; anchor = -1; selected.clear(); repaint();
+}
 
 std::vector<AlbumInfo> AlbumGrid::getSelection() const
 {
@@ -297,12 +302,14 @@ void AlbumGrid::selectAll()
 
 int AlbumGrid::columns() const
 {
-    const float card = ctx.theme().number ("--nx-card-size", 176.0f);
+    if (listMode) return 1;
+    const float card = cardSize > 0.0f ? cardSize : ctx.theme().number ("--nx-card-size", 176.0f);
     return juce::jmax (1, (int) ((float) (getWidth() + 20) / (card + 20.0f)));
 }
 
 juce::Rectangle<int> AlbumGrid::cardBounds (int i) const
 {
+    if (listMode) return { 0, i * rowHeight, getWidth(), rowHeight - 4 };
     const int cols = columns();
     const int gap = 20;
     const int w = (getWidth() - gap * (cols - 1)) / cols;
@@ -313,12 +320,21 @@ juce::Rectangle<int> AlbumGrid::cardBounds (int i) const
 int AlbumGrid::heightForWidth (int width) const
 {
     if (albums.empty()) return 0;
-    const float card = ctx.theme().number ("--nx-card-size", 176.0f);
+    if (listMode) return (maxRows > 0 ? juce::jmin ((int) albums.size(), maxRows * 4) : (int) albums.size()) * rowHeight;
+    const float card = cardSize > 0.0f ? cardSize : ctx.theme().number ("--nx-card-size", 176.0f);
     const int cols = juce::jmax (1, (int) ((float) (width + 20) / (card + 20.0f)));
     int rows = ((int) albums.size() + cols - 1) / cols;
     if (maxRows > 0) rows = juce::jmin (rows, maxRows);
     const int w = (width - 20 * (cols - 1)) / cols;
     return rows * (w + 52 + 20);
+}
+
+juce::Rectangle<int> AlbumGrid::editRect (int i) const
+{
+    if (! onEdit || ! libraryAlbums || roundArt || i < 0 || i >= (int) albums.size()) return {};
+    const auto card = cardBounds (i);
+    if (listMode) return juce::Rectangle<int> (30, 30).withPosition (card.getRight() - 40, card.getCentreY() - 15);
+    return juce::Rectangle<int> (30, 30).withPosition (card.getRight() - 38, card.getY() + 8);
 }
 
 int AlbumGrid::indexAt (juce::Point<int> p) const
@@ -382,6 +398,8 @@ void AlbumGrid::mouseUp (const juce::MouseEvent& e)
     }
     selected.clear();
     anchor = i;
+    if (editRect (i).contains (e.getPosition())) { onEdit (albums[(size_t) i]); return; }
+    if (listMode) { if (onOpen) onOpen (albums[(size_t) i]); return; }
     const auto art = cardBounds (i).removeFromTop (cardBounds (i).getWidth());
     const auto playButton = juce::Rectangle<int> (40, 40).withPosition (art.getRight() - 50, art.getBottom() - 50);
     if (playButton.contains (e.getPosition()) && onPlay) onPlay (albums[(size_t) i]);
@@ -392,12 +410,13 @@ void AlbumGrid::paint (juce::Graphics& g)
 {
     const auto& t = ctx.theme();
     const int cols = columns();
-    const int limit = maxRows > 0 ? juce::jmin ((int) albums.size(), maxRows * cols) : (int) albums.size();
+    const int limit = maxRows > 0 ? juce::jmin ((int) albums.size(), maxRows * (listMode ? 4 : cols)) : (int) albums.size();
     const auto clip = g.getClipBounds();
     for (int i = 0; i < limit; ++i)
     {
         auto card = cardBounds (i);
         if (! card.intersects (clip)) continue;
+        if (listMode) { paintRow (g, i, card); continue; }
         const auto& a = albums[(size_t) i];
         auto art = card.removeFromTop (card.getWidth()).toFloat();
         const bool hot = i == hover;
@@ -483,6 +502,13 @@ void AlbumGrid::paint (juce::Graphics& g)
         }
         if (a.favourite)
             style::drawIcon (g, style::Icon::Heart, juce::Rectangle<float> (18, 18).withPosition (art.getRight() - 26, art.getBottom() - 26), t.accent());
+        if (hot && ! editRect (i).isEmpty())
+        {
+            const auto er = editRect (i).toFloat();
+            g.setColour (juce::Colours::black.withAlpha (0.6f));
+            g.fillEllipse (er);
+            style::drawIcon (g, style::Icon::Edit, er.reduced (7.0f), juce::Colours::white, 2.0f);
+        }
 
         card.removeFromTop (8);
         g.setColour (t.textCol());
@@ -492,6 +518,54 @@ void AlbumGrid::paint (juce::Graphics& g)
         g.setFont (style::font (13.0f));
         g.drawText (a.artist + (a.year > 0 ? " · "_t + juce::String (a.year) : juce::String()), card.removeFromTop (18),
                     roundArt ? juce::Justification::centred : juce::Justification::centredLeft, true);
+    }
+}
+
+void AlbumGrid::paintRow (juce::Graphics& g, int i, juce::Rectangle<int> row)
+{
+    const auto& t = ctx.theme();
+    const auto& a = albums[(size_t) i];
+    const bool hot = i == hover, isSelected = selected.count (i) > 0;
+    g.setColour (isSelected ? t.accent().withAlpha (0.22f) : juce::Colours::white.withAlpha (hot ? 0.08f : 0.03f));
+    g.fillRoundedRectangle (row.toFloat(), 8.0f);
+    auto r = row.reduced (8, 4);
+    auto art = r.removeFromLeft (r.getHeight()).toFloat();
+    auto img = ctx.artwork().get (a.artworkKey, 128);
+    if (! img.isValid()) img = imaging::placeholder (a.title, 64, t.accent(), t.accent2());
+    juce::Path p;
+    p.addRoundedRectangle (art, 5.0f);
+    g.saveState();
+    g.reduceClipRegion (p);
+    g.drawImage (img, art);
+    g.restoreState();
+    r.removeFromLeft (12);
+    auto right = r.removeFromRight (editRect (i).isEmpty() ? 8 : 48);
+    juce::ignoreUnused (right);
+
+    // right to left: format, channels, duration, tracks
+    auto chip = [&] (const juce::String& text, juce::Colour c)
+    {
+        if (text.isEmpty()) return;
+        const float w = (float) juce::roundToInt (style::textWidth (style::font (11.0f, true), text)) + 14.0f;
+        style::paintBadge (g, r.removeFromRight ((int) w + 6).withSizeKeepingCentre ((int) w, 18).toFloat(), text, c);
+    };
+    if (! a.lossy) chip (a.badge(), a.hasDsd ? style::qualityColour (t, PathQuality::BitPerfect) : t.accent());
+    chip (channelBadge (a.maxChannels), a.maxChannels > 2 ? t.accent2() : t.textDim());
+    g.setColour (t.textDim());
+    g.setFont (style::font (12.5f));
+    g.drawText (juce::String (a.trackCount) + " " + "morceaux"_t + " · " + style::formatTime (a.duration), r.removeFromRight (150), juce::Justification::centredRight, true);
+    g.setColour (t.textCol());
+    g.setFont (style::font (14.0f, true));
+    g.drawText (a.title, r.removeFromTop (r.getHeight() / 2 + 2), juce::Justification::bottomLeft, true);
+    g.setColour (t.textDim());
+    g.setFont (style::font (12.5f));
+    g.drawText (a.artist + (a.year > 0 ? " · " + juce::String (a.year) : juce::String()), r, juce::Justification::topLeft, true);
+    if (hot && ! editRect (i).isEmpty())
+    {
+        const auto er = editRect (i).toFloat();
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillEllipse (er);
+        style::drawIcon (g, style::Icon::Edit, er.reduced (7.0f), juce::Colours::white, 2.0f);
     }
 }
 
